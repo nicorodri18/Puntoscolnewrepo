@@ -49,9 +49,9 @@ export default function HomeScreen() {
         const user = userCred.user;
 
         if (user.email === 'admin@gmail.com') {
-          router.replace('/admin/adminDashboard'); // asegúrate de que esta ruta existe
+          router.replace('/admin/adminDashboard');
         } else {
-          router.replace('/client/MenuScreen'); // asegúrate de que esta ruta existe
+          router.replace('/client/MenuScreen');
         }
       }
     } catch (error: any) {
@@ -116,29 +116,56 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#fff', paddingHorizontal: 20,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 20,
   },
   logo: {
-    width: 120, height: 120, resizeMode: 'contain', marginBottom: 20,
+    width: 120,
+    height: 120,
+    resizeMode: 'contain',
+    marginBottom: 20,
   },
   title: {
-    fontSize: 22, color: '#e60012', fontWeight: 'bold', marginBottom: 10,
+    fontSize: 22,
+    color: '#FF9800', // Orange from the palette
+    fontWeight: 'bold',
+    marginBottom: 10,
   },
   input: {
-    width: '85%', backgroundColor: '#f1f1f1',
-    color: '#333', padding: 12, marginBottom: 12,
-    borderRadius: 8, fontSize: 16,
+    width: '85%',
+    backgroundColor: '#FFFFFF',
+    color: '#212121', // Primary text color
+    padding: 12,
+    marginBottom: 12,
+    borderRadius: 8,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
   },
   button: {
-    backgroundColor: '#e60012', padding: 12,
-    borderRadius: 8, width: '85%',
-    alignItems: 'center', marginVertical: 10,
+    backgroundColor: '#FF9800', // Orange from the palette
+    padding: 12,
+    borderRadius: 8,
+    width: '85%',
+    alignItems: 'center',
+    marginVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   buttonText: {
-    color: 'white', fontSize: 16, fontWeight: 'bold',
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   linkText: {
-    color: '#e60012', marginTop: 12, fontSize: 14,
+    color: '#FF9800', // Orange from the palette
+    marginTop: 12,
+    fontSize: 14,
   },
 });
