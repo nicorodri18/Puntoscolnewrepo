@@ -48,26 +48,26 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Estados para productos
+  
   const [newProductName, setNewProductName] = useState('');
   const [newProductPrice, setNewProductPrice] = useState('');
   const [newProductCategory, setNewProductCategory] = useState('');
   const [imageUri, setImageUri] = useState<string | null>(null);
   
-  // Estados para usuarios
+
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [pointsToAdd, setPointsToAdd] = useState('');
   const [addingUser, setAddingUser] = useState(false);
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
 
-  // Estados para el escáner QR
+ 
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [scannedUserId, setScannedUserId] = useState<string | null>(null);
 
-  // Lista de categorías predefinidas
+
   const categories = ['Electrónica', 'Ropa', 'Hogar', 'Juguetes', 'Otros'];
 
   useEffect(() => {
@@ -77,7 +77,7 @@ export default function AdminDashboard() {
       fetchUsers();
     }
 
-    // Solicitar permisos para la cámara
+   
     (async () => {
       const { status } = await BarCodeScanner.requestPermissionsAsync();
       setHasPermission(status === 'granted');
@@ -252,12 +252,12 @@ export default function AdminDashboard() {
     }
   };
 
-  // Función para manejar el escaneo de QR
+ 
   const handleBarCodeScanned = async ({ type, data }: { type: string; data: string }) => {
     setScanned(true);
     
     try {
-      // El formato del QR es "add-points:userId"
+      
       if (type === BarCodeScanner.Constants.BarCodeType.qr && data.startsWith('add-points:')) {
         const userId = data.split(':')[1];
         setScannedUserId(userId);

@@ -280,6 +280,6 @@ const styles = StyleSheet.create({
     borderRadius: 25,
   },
   navButtonActive: {
-    backgroundColor: '#FF9800', // Naranja para el botón activo
+    backgroundColor: '#FF9800',
   },
 });
