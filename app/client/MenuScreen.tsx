@@ -2,8 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { getAuth, signOut } from 'firebase/auth';
 import { collection, doc, getDocs, orderBy, query, updateDoc, where } from 'firebase/firestore';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { supabase } from '../../supabaseClient';
+import { Image } from 'react-native'; 
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { db } from '../../firebaseConfig';
 
@@ -32,6 +34,20 @@ interface PurchaseHistory {
   total: number;
 }
 
+// Helpers seguros para URLs
+const toSafeHttps = (maybeUrl: string | undefined | null): string => {
+  try {
+    const raw = (maybeUrl ?? '').toString().trim();
+    if (!raw) return '';
+    const u = new URL(raw);
+    // fuerza https por si guardaron http
+    if (u.protocol !== 'https:') u.protocol = 'https:';
+    return u.toString();
+  } catch {
+    return '';
+  }
+};
+
 export default function MenuScreen() {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
@@ -43,6 +59,10 @@ export default function MenuScreen() {
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [activeSection, setActiveSection] = useState('catalog');
+
+  // trackeo de imágenes que fallaron para mostrar placeholder
+  const [brokenImage, setBrokenImage] = useState<Record<string, boolean>>({});
+
   const router = useRouter();
   const auth = getAuth();
   const user = auth.currentUser;
@@ -58,6 +78,7 @@ export default function MenuScreen() {
       setLoading(false);
       router.replace('/');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
@@ -73,11 +94,13 @@ export default function MenuScreen() {
     try {
       const q = query(collection(db, 'users'), where('email', '==', user?.email));
       const snapshot = await getDocs(q);
-      if (snapshot.empty) {
-        throw new Error('Usuario no encontrado');
-      }
+      if (snapshot.empty) throw new Error('Usuario no encontrado');
       const docSnap = snapshot.docs[0];
-      setUserData({ docId: docSnap.id, points: docSnap.data().points, email: docSnap.data().email });
+      setUserData({
+        docId: docSnap.id,
+        points: docSnap.data().points,
+        email: docSnap.data().email,
+      });
     } catch (error) {
       console.error('Error al obtener datos del usuario:', error);
       Alert.alert('Error', 'No se pudieron obtener los datos del usuario');
@@ -87,33 +110,44 @@ export default function MenuScreen() {
     }
   };
 
-  const fetchProducts = async () => {
-    try {
-      const q = query(collection(db, 'products'), orderBy('name', 'asc'));
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map((doc) => ({
+const fetchProducts = async () => {
+  try {
+    const q = query(collection(db, 'products'), orderBy('name', 'asc'));
+    const snapshot = await getDocs(q);
+
+    const data = snapshot.docs.map((doc) => {
+      const productData = doc.data();
+      let imageUrl = productData.imageUrl || '';
+
+      // 🔧 Si la URL no es completa, la reconstruimos con Supabase Storage
+      if (imageUrl && !imageUrl.startsWith('http')) {
+        imageUrl = `https://xfhmqxgbrmpijmwcsgkn.supabase.co/storage/v1/object/public/products/${imageUrl}`;
+      }
+
+      return {
         id: doc.id,
-        name: doc.data().name,
-        price: doc.data().price,
-        imageUrl: doc.data().imageUrl || '',
-        category: doc.data().category || 'Sin categoría'
-      })) as Product[];
-      
-      setProducts(data);
-      setFilteredProducts(data);
-      
-      const uniqueCategories = Array.from(new Set(data.map(p => p.category)));
-      setCategories(['Todas', ...uniqueCategories]);
-    } catch (error) {
-      console.error('Error al obtener productos:', error);
-      Alert.alert('Error', 'No se pudieron obtener los productos');
-    }
-  };
+        name: productData.name,
+        price: productData.price,
+        imageUrl,
+        category: productData.category || 'Sin categoría',
+      };
+    }) as Product[];
+
+    setProducts(data);
+    setFilteredProducts(data);
+
+    const uniqueCategories = Array.from(new Set(data.map((p) => p.category)));
+    setCategories(['Todas', ...uniqueCategories]);
+  } catch (error) {
+    console.error('Error al obtener productos:', error);
+    Alert.alert('Error', 'No se pudieron obtener los productos');
+  }
+};
 
   const loadLocalPurchaseHistory = async () => {
     try {
       const jsonValue = await AsyncStorage.getItem(HISTORY_STORAGE_KEY);
-      if (jsonValue !== null) {
+      if (jsonValue) {
         const history = JSON.parse(jsonValue) as PurchaseHistory[];
         setPurchaseHistory(history);
       }
@@ -162,14 +196,11 @@ export default function MenuScreen() {
       Alert.alert('Error', 'Datos del usuario no encontrados. Intenta iniciar sesión nuevamente.');
       return;
     }
-
     const totalCost = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
     if (userData.points < totalCost) {
       Alert.alert('Puntos insuficientes', 'No tienes suficientes puntos para canjear estos productos.');
       return;
     }
-
     try {
       const newPurchase: PurchaseHistory = {
         id: Date.now().toString(),
@@ -177,18 +208,11 @@ export default function MenuScreen() {
         date: new Date().toISOString(),
         total: totalCost,
       };
-
-      // Actualizar puntos en Firebase
       const updatedPoints = userData.points - totalCost;
       await updateDoc(doc(db, 'users', userData.docId), { points: updatedPoints });
-      
-      // Guardar en historial local
       await savePurchaseToHistory(newPurchase);
-      
-      // Actualizar estado local
       setUserData({ ...userData, points: updatedPoints });
       setCart([]);
-      
       Alert.alert('Compra exitosa', `Tu compra de ${cart.length} productos ha sido procesada.`);
     } catch (error) {
       console.error('Error al procesar el canje:', error);
@@ -226,33 +250,40 @@ export default function MenuScreen() {
     router.push('/QRPoints');
   };
 
-  const toggleHistory = () => {
-    setShowHistory(!showHistory);
-  };
+  const toggleHistory = () => setShowHistory(!showHistory);
 
-  const renderProduct = ({ item }: { item: Product }) => (
+const renderProduct = ({ item }: { item: Product }) => {
+  // Limpieza de URL para evitar espacios o saltos de línea
+  const cleanUrl = item.imageUrl?.trim();
+
+  return (
     <View style={styles.productContainer}>
       <View style={styles.productHeader}>
         <Text style={styles.productName}>{item.name}</Text>
         <Text style={styles.productPoints}>{item.price} pts</Text>
       </View>
-      {item.imageUrl ? (
-        <Image 
-          source={{ uri: item.imageUrl }} 
-          style={styles.productImage} 
-          resizeMode="contain"
+
+      {cleanUrl ? (
+        <Image
+          source={{ uri: cleanUrl }}
+          style={styles.productImage}
+          resizeMode="cover"
+          onError={(e) => console.log("❌ Error cargando imagen:", e.nativeEvent.error)}
+          onLoadStart={() => console.log("⏳ Cargando imagen:", cleanUrl)}
+          onLoadEnd={() => console.log("✅ Imagen cargada:", cleanUrl)}
         />
       ) : (
         <View style={[styles.productImage, styles.noImage]}>
           <Icon name="image-not-supported" size={40} color="#ccc" />
         </View>
       )}
+
       <Text style={styles.productCategory}>{item.category}</Text>
-      <TouchableOpacity 
+      <TouchableOpacity
         style={[
           styles.addButton,
-          (!userData || userData.points < item.price) && styles.disabledButton
-        ]} 
+          (!userData || userData.points < item.price) && styles.disabledButton,
+        ]}
         onPress={() => handleAddToCart(item)}
         disabled={!userData || userData.points < item.price}
       >
@@ -260,6 +291,7 @@ export default function MenuScreen() {
       </TouchableOpacity>
     </View>
   );
+};
 
   const renderCartItem = ({ item }: { item: CartItem }) => (
     <View style={styles.cartItem}>
@@ -279,13 +311,11 @@ export default function MenuScreen() {
 
   const renderHistoryItem = ({ item }: { item: PurchaseHistory }) => (
     <View style={styles.historyItem}>
-      <Text style={styles.historyDate}>{new Date(item.date).toLocaleDateString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })}</Text>
+      <Text style={styles.historyDate}>
+        {new Date(item.date).toLocaleDateString('es-ES', {
+          day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+        })}
+      </Text>
       <View style={styles.historyItems}>
         {item.items.map((product, index) => (
           <Text key={index} style={styles.historyProduct}>
@@ -305,7 +335,7 @@ export default function MenuScreen() {
       ]}
       onPress={() => setSelectedCategory(item)}
     >
-      <Text 
+      <Text
         style={[
           styles.categoryText,
           selectedCategory === item && styles.selectedCategoryText
@@ -347,9 +377,7 @@ export default function MenuScreen() {
         <View style={styles.pointsCard}>
           <Text style={styles.pointsLabel}>Tus Puntos</Text>
           <Text style={styles.pointsValue}>{userData?.points ?? 0}</Text>
-          <Text style={styles.pointsLabel}>Disponibles</Text>
-          <Text style={styles.expiryText}>Vencen el</Text>
-          <Text style={styles.expiryDate}>31/12/2025</Text>
+          <Text style={styles.expiryText}>Vencen el 31/12/2025</Text>
         </View>
 
         {/* Categories */}
@@ -418,8 +446,8 @@ export default function MenuScreen() {
               <Text style={styles.cartTotal}>
                 Total: {cart.reduce((sum, item) => sum + item.price * item.quantity, 0)} pts
               </Text>
-              <TouchableOpacity 
-                style={styles.redeemButton} 
+              <TouchableOpacity
+                style={styles.redeemButton}
                 onPress={handleRedeemCart}
                 disabled={!userData || userData.points < cart.reduce((sum, item) => sum + item.price * item.quantity, 0)}
               >
@@ -488,41 +516,27 @@ export default function MenuScreen() {
     </View>
   );
 }
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5', // Matches the image background
-  },
-  scrollContent: {
-    paddingBottom: 80,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  container: { flex: 1, backgroundColor: '#F5F5F5' },
+  scrollContent: { paddingBottom: 80 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: '#FFFFFF', // Matches card background
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0', // Matches subtle borders in the image
+    borderBottomColor: '#E0E0E0',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FF9800', // Matches the orange "CATALOG" title
-  },
-  headerIcons: {
-    flexDirection: 'row',
-  },
-  iconButton: {
-    marginLeft: 15,
-  },
+  title: { fontSize: 24, fontWeight: 'bold', color: '#FF9800' },
+  headerIcons: { flexDirection: 'row' },
+  iconButton: { marginLeft: 15 },
+
   pointsCard: {
-    backgroundColor: '#FFFFFF', // Matches the white card background
+    backgroundColor: '#FFFFFF',
     borderRadius: 10,
     padding: 20,
     margin: 20,
@@ -533,252 +547,81 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  pointsLabel: {
-    fontSize: 16,
-    color: '#757575', // Matches the secondary text color ("Available", "Expire on")
-  },
-  pointsValue: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#F5C400', // Matches the yellow-gold coin color for points
-    marginVertical: 10,
-  },
-  expiryText: {
-    fontSize: 14,
-    color: '#757575', // Matches secondary text
-    marginTop: 10,
-  },
-  expiryDate: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#212121', // Matches primary text color
-  },
+  pointsLabel: { fontSize: 16, color: '#757575' },
+  pointsValue: { fontSize: 36, fontWeight: 'bold', color: '#F5C400', marginVertical: 10 },
+  expiryText: { fontSize: 14, color: '#757575', marginTop: 6 },
+
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#212121', // Matches primary text ("GASOLINE", "FOOD")
-    marginLeft: 15,
-    marginTop: 20,
-    marginBottom: 10,
+    fontSize: 20, fontWeight: 'bold', color: '#212121', marginLeft: 15, marginTop: 20, marginBottom: 10,
   },
-  categoriesList: {
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
-  },
+
+  categoriesList: { paddingHorizontal: 15, paddingVertical: 10, backgroundColor: '#FFFFFF' },
   categoryButton: {
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#F0F0F0', // A slightly darker gray for unselected categories
-    marginRight: 10,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
+    paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20,
+    backgroundColor: '#F0F0F0', marginRight: 10, borderWidth: 1, borderColor: '#E0E0E0',
   },
-  selectedCategoryButton: {
-    backgroundColor: '#FF9800', // Orange for selected category
-    borderColor: '#FF9800',
-  },
-  categoryText: {
-    color: '#212121', // Primary text color
-  },
-  selectedCategoryText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  productsList: {
-    paddingHorizontal: 10,
-    paddingBottom: 20,
-  },
-  productsRow: {
-    justifyContent: 'space-between',
-    paddingHorizontal: 10,
-    marginBottom: 15,
-  },
+  selectedCategoryButton: { backgroundColor: '#FF9800', borderColor: '#FF9800' },
+  categoryText: { color: '#212121' },
+  selectedCategoryText: { color: '#FFFFFF', fontWeight: 'bold' },
+
+  productsList: { paddingHorizontal: 10, paddingBottom: 20 },
+  productsRow: { justifyContent: 'space-between', paddingHorizontal: 10, marginBottom: 15 },
+
   productContainer: {
-    backgroundColor: '#FFFFFF', // Matches product card background
-    borderRadius: 10,
-    width: '48%',
-    padding: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: '#FFFFFF', borderRadius: 10, width: '48%', padding: 12, shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 2,
   },
-  productHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  productName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#212121', // Matches product name text
-    flex: 1,
-  },
-  productPoints: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#757575', // Matches points text color (e.g., "250 points")
-    marginLeft: 10,
-  },
+  productHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  productName: { fontSize: 16, fontWeight: 'bold', color: '#212121', flex: 1 },
+  productPoints: { fontSize: 16, color: '#757575', marginLeft: 10 },
+
   productImage: {
-    width: '100%',
-    height: 100,
-    borderRadius: 5,
-    marginBottom: 10,
-    backgroundColor: '#F9F9F9',
+    width: '100%', height: 140, borderRadius: 8, marginBottom: 10, backgroundColor: '#F2F2F2',
   },
-  noImage: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  productCategory: {
-    fontSize: 14,
-    color: '#757575', // Matches secondary text
-    marginBottom: 10,
-    fontStyle: 'italic',
-  },
-  addButton: {
-    backgroundColor: '#FF9800', // Orange for the "Canjear" button
-    borderRadius: 5,
-    padding: 10,
-    alignItems: 'center',
-  },
-  disabledButton: {
-    backgroundColor: '#CCCCCC',
-  },
-  addButtonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
+  noImage: { justifyContent: 'center', alignItems: 'center' },
+  noImageText: { marginTop: 6, fontSize: 12, color: '#999' },
+
+  productCategory: { fontSize: 14, color: '#757575', marginBottom: 10, fontStyle: 'italic' },
+  addButton: { backgroundColor: '#FF9800', borderRadius: 5, padding: 10, alignItems: 'center' },
+  disabledButton: { backgroundColor: '#CCCCCC' },
+  addButtonText: { color: '#FFFFFF', fontWeight: 'bold' },
+
   historyToggle: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 15,
-    backgroundColor: '#FFFFFF',
-    marginTop: 20,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#E0E0E0',
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    padding: 15, backgroundColor: '#FFFFFF', marginTop: 20,
+    borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#E0E0E0',
   },
-  historyToggleText: {
-    fontSize: 16,
-    color: '#FF9800', // Orange for toggle text
-    marginRight: 5,
-  },
-  historySection: {
-    backgroundColor: '#FFFFFF',
-    padding: 15,
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: '#757575', // Matches secondary text
-    marginVertical: 20,
-    paddingHorizontal: 20,
-  },
-  historyItem: {
-    backgroundColor: '#F9F9F9',
-    borderRadius: 5,
-    padding: 10,
-    marginBottom: 10,
-  },
-  historyDate: {
-    fontWeight: 'bold',
-    color: '#212121', // Primary text
-    marginBottom: 5,
-  },
-  historyItems: {
-    marginBottom: 5,
-  },
-  historyProduct: {
-    color: '#757575', // Secondary text
-  },
-  historyTotal: {
-    fontWeight: 'bold',
-    color: '#FF9800', // Orange for total
-    textAlign: 'right',
-  },
-  cartSection: {
-    backgroundColor: '#FFFFFF',
-    padding: 15,
-    marginTop: 20,
-    borderTopWidth: 1,
-    borderColor: '#E0E0E0',
-  },
+  historyToggleText: { fontSize: 16, color: '#FF9800', marginRight: 5 },
+  historySection: { backgroundColor: '#FFFFFF', padding: 15 },
+  emptyText: { textAlign: 'center', color: '#757575', marginVertical: 20, paddingHorizontal: 20 },
+
+  historyItem: { backgroundColor: '#F9F9F9', borderRadius: 5, padding: 10, marginBottom: 10 },
+  historyDate: { fontWeight: 'bold', color: '#212121', marginBottom: 5 },
+  historyItems: { marginBottom: 5 },
+  historyProduct: { color: '#757575' },
+  historyTotal: { fontWeight: 'bold', color: '#FF9800', textAlign: 'right' },
+
+  cartSection: { backgroundColor: '#FFFFFF', padding: 15, marginTop: 20, borderTopWidth: 1, borderColor: '#E0E0E0' },
   cartItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEE',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#EEE',
   },
-  cartItemName: {
-    flex: 2,
-    color: '#212121', // Primary text
-  },
-  quantityControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    justifyContent: 'center',
-  },
-  quantityText: {
-    marginHorizontal: 10,
-    color: '#212121', // Primary text
-  },
-  cartItemPrice: {
-    flex: 1,
-    textAlign: 'right',
-    color: '#212121', // Primary text
-  },
-  cartTotal: {
-    fontWeight: 'bold',
-    fontSize: 16,
-    color: '#212121', // Primary text
-    textAlign: 'right',
-    marginTop: 10,
-  },
-  redeemButton: {
-    backgroundColor: '#FF9800', // Orange for the "Canjear" button
-    borderRadius: 5,
-    padding: 15,
-    alignItems: 'center',
-    marginTop: 15,
-  },
-  redeemButtonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+  cartItemName: { flex: 2, color: '#212121' },
+  quantityControls: { flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'center' },
+  quantityText: { marginHorizontal: 10, color: '#212121' },
+  cartItemPrice: { flex: 1, textAlign: 'right', color: '#212121' },
+  cartTotal: { fontWeight: 'bold', fontSize: 16, color: '#212121', textAlign: 'right', marginTop: 10 },
+
+  redeemButton: { backgroundColor: '#FF9800', borderRadius: 5, padding: 15, alignItems: 'center', marginTop: 15 },
+  redeemButtonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
+
   bottomNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-    paddingVertical: 10,
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
+    backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E0E0E0',
+    paddingVertical: 10, position: 'absolute', bottom: 0, left: 0, right: 0,
+    elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1, shadowRadius: 4,
   },
-  navButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 10,
-    borderRadius: 25,
-  },
-  navButtonActive: {
-    backgroundColor: '#FF9800', // Orange for active navigation
-  },
+  navButton: { alignItems: 'center', justifyContent: 'center', padding: 10, borderRadius: 25 },
+  navButtonActive: { backgroundColor: '#FF9800' },
 });
