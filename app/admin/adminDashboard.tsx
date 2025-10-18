@@ -43,7 +43,7 @@ interface User {
   name: string;
   email: string;
   points: number;
-  approved?: boolean; // compat futuro
+  approved?: boolean;
 }
 
 export default function AdminDashboard() {
@@ -101,7 +101,6 @@ export default function AdminDashboard() {
         const p = d.data() as Product;
         let imageUrl = (p.imageUrl || '') as string;
 
-        // Si guardaste solo el nombre del archivo, convierte a URL pública
         if (imageUrl && !imageUrl.startsWith('http')) {
           imageUrl = `https://xfhmqxgbrmpijmwcsgkn.supabase.co/storage/v1/object/public/products/${imageUrl}`;
         }
@@ -210,12 +209,11 @@ export default function AdminDashboard() {
       await addDoc(collection(db, 'products'), {
         name: newProductName.trim(),
         price,
-        imageUrl: imageUrl ?? null, // guarda URL pública o null
+        imageUrl: imageUrl ?? null,
         category: newProductCategory,
         description: newProductDescription?.trim() || '',
       });
 
-      // reset form
       setNewProductName('');
       setNewProductPrice('');
       setNewProductCategory('');
@@ -668,4 +666,34 @@ const styles = StyleSheet.create({
   form: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 8, marginTop: 16, elevation: 2 },
   subtitle: { fontSize: 18, fontWeight: '700', color: '#333333', marginBottom: 16, textAlign: 'center' },
   emptyText: { fontSize: 16, color: '#6B7280', textAlign: 'center', marginVertical: 20 },
+
+  // ✅ Botones genéricos usados en sección Usuarios
+  button: {
+    backgroundColor: '#FFD700',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  buttonText: {
+    color: '#333333',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  cancelButton: {
+    backgroundColor: '#E5E7EB',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#D32F2F',
+  },
+  cancelButtonText: {
+    color: '#D32F2F',
+    fontSize: 16,
+    fontWeight: '700',
+  },
 });

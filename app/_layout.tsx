@@ -1,11 +1,12 @@
 import { Stack } from 'expo-router';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { auth } from '../firebaseConfig';
 
 export default function Layout() {
-  const [user, setUser] = useState(null);
+  // ✅ Tipamos correctamente el usuario
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -28,7 +29,7 @@ export default function Layout() {
     <Stack screenOptions={{ headerShown: false }}>
       {!user ? (
         <Stack.Screen name="(tabs)/index" />
-      ) : user.email === 'admin@gmail.com' ? (
+      ) : user?.email === 'admin@gmail.com' ? (
         <Stack.Screen name="admin/adminDashboard" />
       ) : (
         <Stack.Screen name="client/MenuScreen" />
