@@ -2,10 +2,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { getAuth, signOut } from 'firebase/auth';
 import { collection, doc, getDocs, orderBy, query, updateDoc, where } from 'firebase/firestore';
-import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { supabase } from '../../supabaseClient';
-import { Image } from 'react-native'; 
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { db } from '../../firebaseConfig';
 
@@ -15,6 +23,7 @@ interface Product {
   price: number;
   imageUrl: string;
   category: string;
+  description?: string; // ← ahora soporta descripción
 }
 
 interface CartItem extends Product {
@@ -34,20 +43,6 @@ interface PurchaseHistory {
   total: number;
 }
 
-// Helpers seguros para URLs
-const toSafeHttps = (maybeUrl: string | undefined | null): string => {
-  try {
-    const raw = (maybeUrl ?? '').toString().trim();
-    if (!raw) return '';
-    const u = new URL(raw);
-    // fuerza https por si guardaron http
-    if (u.protocol !== 'https:') u.protocol = 'https:';
-    return u.toString();
-  } catch {
-    return '';
-  }
-};
-
 export default function MenuScreen() {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
@@ -59,9 +54,6 @@ export default function MenuScreen() {
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [activeSection, setActiveSection] = useState('catalog');
-
-  // trackeo de imágenes que fallaron para mostrar placeholder
-  const [brokenImage, setBrokenImage] = useState<Record<string, boolean>>({});
 
   const router = useRouter();
   const auth = getAuth();
@@ -110,39 +102,40 @@ export default function MenuScreen() {
     }
   };
 
-const fetchProducts = async () => {
-  try {
-    const q = query(collection(db, 'products'), orderBy('name', 'asc'));
-    const snapshot = await getDocs(q);
+  const fetchProducts = async () => {
+    try {
+      const q = query(collection(db, 'products'), orderBy('name', 'asc'));
+      const snapshot = await getDocs(q);
 
-    const data = snapshot.docs.map((doc) => {
-      const productData = doc.data();
-      let imageUrl = productData.imageUrl || '';
+      const data = snapshot.docs.map((doc) => {
+        const productData = doc.data() as any;
+        let imageUrl = productData.imageUrl || '';
 
-      // 🔧 Si la URL no es completa, la reconstruimos con Supabase Storage
-      if (imageUrl && !imageUrl.startsWith('http')) {
-        imageUrl = `https://xfhmqxgbrmpijmwcsgkn.supabase.co/storage/v1/object/public/products/${imageUrl}`;
-      }
+        // Si en Firestore solo guardaste el nombre de archivo, arma la URL pública de Supabase
+        if (imageUrl && !imageUrl.startsWith('http')) {
+          imageUrl = `https://xfhmqxgbrmpijmwcsgkn.supabase.co/storage/v1/object/public/products/${imageUrl}`;
+        }
 
-      return {
-        id: doc.id,
-        name: productData.name,
-        price: productData.price,
-        imageUrl,
-        category: productData.category || 'Sin categoría',
-      };
-    }) as Product[];
+        return {
+          id: doc.id,
+          name: productData.name,
+          price: productData.price,
+          imageUrl,
+          category: productData.category || 'Sin categoría',
+          description: typeof productData.description === 'string' ? productData.description : '',
+        } as Product;
+      });
 
-    setProducts(data);
-    setFilteredProducts(data);
+      setProducts(data);
+      setFilteredProducts(data);
 
-    const uniqueCategories = Array.from(new Set(data.map((p) => p.category)));
-    setCategories(['Todas', ...uniqueCategories]);
-  } catch (error) {
-    console.error('Error al obtener productos:', error);
-    Alert.alert('Error', 'No se pudieron obtener los productos');
-  }
-};
+      const uniqueCategories = Array.from(new Set(data.map((p) => p.category)));
+      setCategories(['Todas', ...uniqueCategories]);
+    } catch (error) {
+      console.error('Error al obtener productos:', error);
+      Alert.alert('Error', 'No se pudieron obtener los productos');
+    }
+  };
 
   const loadLocalPurchaseHistory = async () => {
     try {
@@ -235,11 +228,6 @@ const fetchProducts = async () => {
     router.push('/EditProfile');
   };
 
-  const handleChat = () => {
-    setActiveSection('chat');
-    router.push('/chat');
-  };
-
   const handleHome = () => {
     setActiveSection('home');
     router.push('/client/MenuScreen');
@@ -252,46 +240,51 @@ const fetchProducts = async () => {
 
   const toggleHistory = () => setShowHistory(!showHistory);
 
-const renderProduct = ({ item }: { item: Product }) => {
-  // Limpieza de URL para evitar espacios o saltos de línea
-  const cleanUrl = item.imageUrl?.trim();
+  const renderProduct = ({ item }: { item: Product }) => {
+    const cleanUrl = item.imageUrl?.trim();
 
-  return (
-    <View style={styles.productContainer}>
-      <View style={styles.productHeader}>
-        <Text style={styles.productName}>{item.name}</Text>
-        <Text style={styles.productPoints}>{item.price} pts</Text>
-      </View>
-
-      {cleanUrl ? (
-        <Image
-          source={{ uri: cleanUrl }}
-          style={styles.productImage}
-          resizeMode="cover"
-          onError={(e) => console.log("❌ Error cargando imagen:", e.nativeEvent.error)}
-          onLoadStart={() => console.log("⏳ Cargando imagen:", cleanUrl)}
-          onLoadEnd={() => console.log("✅ Imagen cargada:", cleanUrl)}
-        />
-      ) : (
-        <View style={[styles.productImage, styles.noImage]}>
-          <Icon name="image-not-supported" size={40} color="#ccc" />
+    return (
+      <View style={styles.productContainer}>
+        <View style={styles.productHeader}>
+          <Text style={styles.productName}>{item.name}</Text>
+          <Text style={styles.productPoints}>{item.price} pts</Text>
         </View>
-      )}
 
-      <Text style={styles.productCategory}>{item.category}</Text>
-      <TouchableOpacity
-        style={[
-          styles.addButton,
-          (!userData || userData.points < item.price) && styles.disabledButton,
-        ]}
-        onPress={() => handleAddToCart(item)}
-        disabled={!userData || userData.points < item.price}
-      >
-        <Text style={styles.addButtonText}>Canjear</Text>
-      </TouchableOpacity>
-    </View>
-  );
-};
+        {item.description ? (
+          <Text style={styles.productDesc} numberOfLines={2} ellipsizeMode="tail">
+            {item.description}
+          </Text>
+        ) : null}
+
+        {cleanUrl ? (
+          <Image
+            source={{ uri: cleanUrl }}
+            style={styles.productImage}
+            resizeMode="cover"
+            onError={(e) => console.log('❌ Error cargando imagen:', e.nativeEvent.error)}
+            onLoadStart={() => console.log('⏳ Cargando imagen:', cleanUrl)}
+            onLoadEnd={() => console.log('✅ Imagen cargada:', cleanUrl)}
+          />
+        ) : (
+          <View style={[styles.productImage, styles.noImage]}>
+            <Icon name="image-not-supported" size={40} color="#ccc" />
+          </View>
+        )}
+
+        <Text style={styles.productCategory}>{item.category}</Text>
+        <TouchableOpacity
+          style={[
+            styles.addButton,
+            (!userData || userData.points < item.price) && styles.disabledButton,
+          ]}
+          onPress={() => handleAddToCart(item)}
+          disabled={!userData || userData.points < item.price}
+        >
+          <Text style={styles.addButtonText}>Canjear</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   const renderCartItem = ({ item }: { item: CartItem }) => (
     <View style={styles.cartItem}>
@@ -313,7 +306,11 @@ const renderProduct = ({ item }: { item: Product }) => {
     <View style={styles.historyItem}>
       <Text style={styles.historyDate}>
         {new Date(item.date).toLocaleDateString('es-ES', {
-          day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
         })}
       </Text>
       <View style={styles.historyItems}>
@@ -331,14 +328,14 @@ const renderProduct = ({ item }: { item: Product }) => {
     <TouchableOpacity
       style={[
         styles.categoryButton,
-        selectedCategory === item && styles.selectedCategoryButton
+        selectedCategory === item && styles.selectedCategoryButton,
       ]}
       onPress={() => setSelectedCategory(item)}
     >
       <Text
         style={[
           styles.categoryText,
-          selectedCategory === item && styles.selectedCategoryText
+          selectedCategory === item && styles.selectedCategoryText,
         ]}
       >
         {item}
@@ -361,9 +358,6 @@ const renderProduct = ({ item }: { item: Product }) => {
         <View style={styles.header}>
           <Text style={styles.title}>CATÁLOGO</Text>
           <View style={styles.headerIcons}>
-            <TouchableOpacity onPress={handleChat} style={styles.iconButton}>
-              <Icon name="chat" size={28} color="#2196F3" />
-            </TouchableOpacity>
             <TouchableOpacity onPress={handleProfile} style={styles.iconButton}>
               <Icon name="person" size={28} color="#00A859" />
             </TouchableOpacity>
@@ -411,7 +405,11 @@ const renderProduct = ({ item }: { item: Product }) => {
           <Text style={styles.historyToggleText}>
             {showHistory ? 'Ocultar historial' : 'Mostrar historial de canjes'}
           </Text>
-          <Icon name={showHistory ? 'keyboard-arrow-up' : 'keyboard-arrow-down'} size={24} color="#00A859" />
+          <Icon
+            name={showHistory ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
+            size={24}
+            color="#00A859"
+          />
         </TouchableOpacity>
 
         {/* Purchase History */}
@@ -449,7 +447,10 @@ const renderProduct = ({ item }: { item: Product }) => {
               <TouchableOpacity
                 style={styles.redeemButton}
                 onPress={handleRedeemCart}
-                disabled={!userData || userData.points < cart.reduce((sum, item) => sum + item.price * item.quantity, 0)}
+                disabled={
+                  !userData ||
+                  userData.points < cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
+                }
               >
                 <Text style={styles.redeemButtonText}>Canjear</Text>
               </TouchableOpacity>
@@ -461,10 +462,7 @@ const renderProduct = ({ item }: { item: Product }) => {
       {/* Bottom Navigation Bar */}
       <View style={styles.bottomNav}>
         <TouchableOpacity
-          style={[
-            styles.navButton,
-            activeSection === 'points' && styles.navButtonActive,
-          ]}
+          style={[styles.navButton, activeSection === 'points' && styles.navButtonActive]}
           onPress={handlePoints}
         >
           <Icon
@@ -474,43 +472,16 @@ const renderProduct = ({ item }: { item: Product }) => {
           />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[
-            styles.navButton,
-            activeSection === 'home' && styles.navButtonActive,
-          ]}
+          style={[styles.navButton, activeSection === 'home' && styles.navButtonActive]}
           onPress={handleHome}
         >
-          <Icon
-            name="home"
-            size={28}
-            color={activeSection === 'home' ? '#fff' : '#666'}
-          />
+          <Icon name="home" size={28} color={activeSection === 'home' ? '#fff' : '#666'} />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[
-            styles.navButton,
-            activeSection === 'chat' && styles.navButtonActive,
-          ]}
-          onPress={handleChat}
-        >
-          <Icon
-            name="build"
-            size={28}
-            color={activeSection === 'chat' ? '#fff' : '#666'}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.navButton,
-            activeSection === 'profile' && styles.navButtonActive,
-          ]}
+          style={[styles.navButton, activeSection === 'profile' && styles.navButtonActive]}
           onPress={handleProfile}
         >
-          <Icon
-            name="person"
-            size={28}
-            color={activeSection === 'profile' ? '#fff' : '#666'}
-          />
+          <Icon name="person" size={28} color={activeSection === 'profile' ? '#fff' : '#666'} />
         </TouchableOpacity>
       </View>
     </View>
@@ -552,13 +523,23 @@ const styles = StyleSheet.create({
   expiryText: { fontSize: 14, color: '#757575', marginTop: 6 },
 
   sectionTitle: {
-    fontSize: 20, fontWeight: 'bold', color: '#212121', marginLeft: 15, marginTop: 20, marginBottom: 10,
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#212121',
+    marginLeft: 15,
+    marginTop: 20,
+    marginBottom: 10,
   },
 
   categoriesList: { paddingHorizontal: 15, paddingVertical: 10, backgroundColor: '#FFFFFF' },
   categoryButton: {
-    paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20,
-    backgroundColor: '#F0F0F0', marginRight: 10, borderWidth: 1, borderColor: '#E0E0E0',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#F0F0F0',
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
   },
   selectedCategoryButton: { backgroundColor: '#FF9800', borderColor: '#FF9800' },
   categoryText: { color: '#212121' },
@@ -568,15 +549,32 @@ const styles = StyleSheet.create({
   productsRow: { justifyContent: 'space-between', paddingHorizontal: 10, marginBottom: 15 },
 
   productContainer: {
-    backgroundColor: '#FFFFFF', borderRadius: 10, width: '48%', padding: 12, shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 2,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    width: '48%',
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  productHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  productHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   productName: { fontSize: 16, fontWeight: 'bold', color: '#212121', flex: 1 },
   productPoints: { fontSize: 16, color: '#757575', marginLeft: 10 },
 
+  productDesc: {
+    fontSize: 12,
+    color: '#616161',
+    marginBottom: 8,
+  },
+
   productImage: {
-    width: '100%', height: 140, borderRadius: 8, marginBottom: 10, backgroundColor: '#F2F2F2',
+    width: '100%',
+    height: 140,
+    borderRadius: 8,
+    marginBottom: 10,
+    backgroundColor: '#F2F2F2',
   },
   noImage: { justifyContent: 'center', alignItems: 'center' },
   noImageText: { marginTop: 6, fontSize: 12, color: '#999' },
@@ -587,15 +585,26 @@ const styles = StyleSheet.create({
   addButtonText: { color: '#FFFFFF', fontWeight: 'bold' },
 
   historyToggle: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    padding: 15, backgroundColor: '#FFFFFF', marginTop: 20,
-    borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#E0E0E0',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: '#FFFFFF',
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#E0E0E0',
   },
   historyToggleText: { fontSize: 16, color: '#FF9800', marginRight: 5 },
   historySection: { backgroundColor: '#FFFFFF', padding: 15 },
   emptyText: { textAlign: 'center', color: '#757575', marginVertical: 20, paddingHorizontal: 20 },
 
-  historyItem: { backgroundColor: '#F9F9F9', borderRadius: 5, padding: 10, marginBottom: 10 },
+  historyItem: {
+    backgroundColor: '#F9F9F9',
+    borderRadius: 5,
+    padding: 10,
+    marginBottom: 10,
+  },
   historyDate: { fontWeight: 'bold', color: '#212121', marginBottom: 5 },
   historyItems: { marginBottom: 5 },
   historyProduct: { color: '#757575' },
@@ -603,8 +612,12 @@ const styles = StyleSheet.create({
 
   cartSection: { backgroundColor: '#FFFFFF', padding: 15, marginTop: 20, borderTopWidth: 1, borderColor: '#E0E0E0' },
   cartItem: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#EEE',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEE',
   },
   cartItemName: { flex: 2, color: '#212121' },
   quantityControls: { flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'center' },
@@ -616,11 +629,22 @@ const styles = StyleSheet.create({
   redeemButtonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
 
   bottomNav: {
-    flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
-    backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E0E0E0',
-    paddingVertical: 10, position: 'absolute', bottom: 0, left: 0, right: 0,
-    elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1, shadowRadius: 4,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+    paddingVertical: 10,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   navButton: { alignItems: 'center', justifyContent: 'center', padding: 10, borderRadius: 25 },
   navButtonActive: { backgroundColor: '#FF9800' },
