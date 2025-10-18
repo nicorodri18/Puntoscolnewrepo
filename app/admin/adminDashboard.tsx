@@ -22,6 +22,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ImageBackground,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { useRouter } from 'expo-router';
@@ -48,12 +49,10 @@ interface User {
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<'products' | 'users'>('products');
-
-  // products
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // create product form
+  // crear producto
   const [newProductName, setNewProductName] = useState('');
   const [newProductPrice, setNewProductPrice] = useState('');
   const [newProductCategory, setNewProductCategory] = useState('');
@@ -61,7 +60,7 @@ export default function AdminDashboard() {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  // users
+  // usuarios
   const [users, setUsers] = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [pointsToAdd, setPointsToAdd] = useState('');
@@ -75,11 +74,8 @@ export default function AdminDashboard() {
   const auth = getAuth();
 
   useEffect(() => {
-    if (activeTab === 'products') {
-      fetchProducts();
-    } else {
-      fetchUsers();
-    }
+    if (activeTab === 'products') fetchProducts();
+    else fetchUsers();
   }, [activeTab]);
 
   const handleLogout = async () => {
@@ -353,14 +349,21 @@ export default function AdminDashboard() {
   );
 
   return (
-    <View style={styles.container}>
-      {/* Header con logout */}
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Panel de Administración — Arepabuelas</Text>
-        <TouchableOpacity onPress={handleLogout} style={styles.headerBtn} accessibilityLabel="Cerrar sesión">
-          <MaterialIcons name="logout" size={24} color="#D32F2F" />
+    <ImageBackground
+      source={require('../../assets/images/fondo-arepabuelas.png')}
+      style={styles.background}
+      resizeMode="cover"
+    >
+      <View style={styles.overlay} />
+
+      <View style={styles.header}>
+        <Image source={require('../../assets/images/arepabuelas1.png')} style={styles.logo} />
+        <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+          <MaterialIcons name="logout" size={26} color="#C75B12" />
         </TouchableOpacity>
       </View>
+
+      <Text style={styles.title}>Panel de Administración</Text>
 
       <View style={styles.tabContainer}>
         <TouchableOpacity
@@ -380,312 +383,291 @@ export default function AdminDashboard() {
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#2E7D32" style={styles.loader} />
+        <ActivityIndicator size="large" color="#C75B12" style={styles.loader} />
       ) : (
         <ScrollView style={styles.contentContainer} keyboardShouldPersistTaps="handled">
-          {activeTab === 'products' ? (
-            <>
-              <Text style={styles.sectionTitle}>Gestión de Productos</Text>
-
-              <TextInput
-                style={styles.input}
-                placeholder="Nombre del producto"
-                value={newProductName}
-                onChangeText={setNewProductName}
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Precio en puntos"
-                keyboardType="numeric"
-                value={newProductPrice}
-                onChangeText={setNewProductPrice}
-              />
-              <Picker
-                selectedValue={newProductCategory}
-                onValueChange={(v) => setNewProductCategory(v)}
-                style={styles.picker}
-              >
-                <Picker.Item label="Selecciona una categoría" value="" />
-                {categories.map((c) => (
-                  <Picker.Item key={c} label={c} value={c} />
-                ))}
-              </Picker>
-
-              <TextInput
-                style={[styles.input, { height: 90, textAlignVertical: 'top' }]}
-                placeholder="Descripción (opcional)"
-                value={newProductDescription}
-                multiline
-                onChangeText={setNewProductDescription}
-              />
-
-              <TouchableOpacity style={styles.imagePicker} onPress={pickImage}>
-                <Text style={styles.imagePickerText}>
-                  {imageUri ? 'Cambiar imagen seleccionada' : 'Seleccionar imagen'}
-                </Text>
-              </TouchableOpacity>
-
-              {imageUri && (
-                <View style={styles.previewWrap}>
-                  <Image source={{ uri: imageUri }} style={styles.preview} />
-                  {uploading && <ActivityIndicator size="small" color="#2E7D32" />}
-                </View>
-              )}
-
-              <TouchableOpacity style={styles.addButton} onPress={handleAddProduct} disabled={uploading}>
-                <Text style={styles.addButtonText}>{uploading ? 'Subiendo...' : 'Agregar Producto'}</Text>
-              </TouchableOpacity>
-
-              <FlatList
-                data={products}
-                keyExtractor={(item) => item.id}
-                renderItem={renderProductItem}
-                scrollEnabled={false}
-                contentContainerStyle={styles.list}
-              />
-            </>
-          ) : (
-            <>
-              <Text style={styles.sectionTitle}>Gestión de Usuarios</Text>
-
-              {users.length === 0 ? (
-                <View style={{ marginTop: 20 }}>
-                  <Text style={styles.emptyText}>No hay usuarios registrados.</Text>
-                  <TouchableOpacity style={styles.button} onPress={() => setAddingUser(true)}>
-                    <Text style={styles.buttonText}>Agregar Usuario</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <>
-                  <FlatList
-                    data={users}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderUserItem}
-                    scrollEnabled={false}
-                    contentContainerStyle={styles.list}
-                  />
-                  <TouchableOpacity style={styles.addButton} onPress={() => setAddingUser(true)}>
-                    <Text style={styles.addButtonText}>+ Agregar nuevo usuario</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-
-              {addingUser && (
-                <View style={styles.form}>
-                  <Text style={styles.subtitle}>Nuevo Usuario</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Nombre"
-                    value={newUserName}
-                    onChangeText={setNewUserName}
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Correo"
-                    value={newUserEmail}
-                    onChangeText={setNewUserEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                  <TouchableOpacity style={styles.button} onPress={handleAddUser}>
-                    <Text style={styles.buttonText}>Guardar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.cancelButton} onPress={() => setAddingUser(false)}>
-                    <Text style={styles.cancelButtonText}>Cancelar</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {selectedUser && (
-                <View style={styles.form}>
-                  <Text style={styles.subtitle}>Asignar puntos a {selectedUser.name}</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Puntos a agregar"
-                    value={pointsToAdd}
-                    onChangeText={setPointsToAdd}
-                    keyboardType="numeric"
-                  />
-                  <TouchableOpacity style={styles.button} onPress={handleAddPoints}>
-                    <Text style={styles.buttonText}>Asignar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.cancelButton} onPress={() => setSelectedUser(null)}>
-                    <Text style={styles.cancelButtonText}>Cancelar</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </>
-          )}
+          {activeTab === 'products'
+            ? <>
+                <Text style={styles.sectionTitle}>Gestión de Productos</Text>
+                {/* Formulario */}
+                <TextInput style={styles.input} placeholder="Nombre del producto" value={newProductName} onChangeText={setNewProductName} />
+                <TextInput style={styles.input} placeholder="Precio en puntos" keyboardType="numeric" value={newProductPrice} onChangeText={setNewProductPrice} />
+                <Picker selectedValue={newProductCategory} onValueChange={(v) => setNewProductCategory(v)} style={styles.picker}>
+                  <Picker.Item label="Selecciona una categoría" value="" />
+                  {categories.map((c) => <Picker.Item key={c} label={c} value={c} />)}
+                </Picker>
+                <TextInput style={[styles.input, { height: 90, textAlignVertical: 'top' }]} placeholder="Descripción (opcional)" value={newProductDescription} multiline onChangeText={setNewProductDescription} />
+                <TouchableOpacity style={styles.imagePicker} onPress={pickImage}>
+                  <Text style={styles.imagePickerText}>
+                    {imageUri ? 'Cambiar imagen seleccionada' : 'Seleccionar imagen'}
+                  </Text>
+                </TouchableOpacity>
+                {imageUri && (
+                  <View style={styles.previewWrap}>
+                    <Image source={{ uri: imageUri }} style={styles.preview} />
+                    {uploading && <ActivityIndicator size="small" color="#C75B12" />}
+                  </View>
+                )}
+                <TouchableOpacity style={styles.addButton} onPress={handleAddProduct} disabled={uploading}>
+                  <Text style={styles.addButtonText}>{uploading ? 'Subiendo...' : 'Agregar Producto'}</Text>
+                </TouchableOpacity>
+                <FlatList data={products} keyExtractor={(item) => item.id} renderItem={renderProductItem} scrollEnabled={false} contentContainerStyle={styles.list} />
+              </>
+            : <>
+                <Text style={styles.sectionTitle}>Gestión de Usuarios</Text>
+                <FlatList data={users} keyExtractor={(item) => item.id} renderItem={renderUserItem} scrollEnabled={false} contentContainerStyle={styles.list} />
+                <TouchableOpacity style={styles.addButton} onPress={() => setAddingUser(true)}>
+                  <Text style={styles.addButtonText}>+ Agregar nuevo usuario</Text>
+                </TouchableOpacity>
+                {addingUser && (
+                  <View style={styles.form}>
+                    <Text style={styles.subtitle}>Nuevo Usuario</Text>
+                    <TextInput style={styles.input} placeholder="Nombre" value={newUserName} onChangeText={setNewUserName} />
+                    <TextInput style={styles.input} placeholder="Correo" value={newUserEmail} onChangeText={setNewUserEmail} keyboardType="email-address" autoCapitalize="none" />
+                    <TouchableOpacity style={styles.button} onPress={handleAddUser}>
+                      <Text style={styles.buttonText}>Guardar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.cancelButton} onPress={() => setAddingUser(false)}>
+                      <Text style={styles.cancelButtonText}>Cancelar</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {selectedUser && (
+                  <View style={styles.form}>
+                    <Text style={styles.subtitle}>Asignar puntos a {selectedUser.name}</Text>
+                    <TextInput style={styles.input} placeholder="Puntos a agregar" value={pointsToAdd} onChangeText={setPointsToAdd} keyboardType="numeric" />
+                    <TouchableOpacity style={styles.button} onPress={handleAddPoints}>
+                      <Text style={styles.buttonText}>Asignar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.cancelButton} onPress={() => setSelectedUser(null)}>
+                      <Text style={styles.cancelButtonText}>Cancelar</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </>}
         </ScrollView>
       )}
-    </View>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  // Layout
-  container: { flex: 1, backgroundColor: '#F5F5F5' },
-  contentContainer: { paddingHorizontal: 16 },
-  loader: { marginTop: 40 },
+  background: { flex: 1 },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,243,224,0.55)' },
 
-  // Header
-  headerRow: {
-    paddingTop: 16,
-    paddingHorizontal: 16,
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 50,
   },
-  headerBtn: {
-    padding: 6,
-    borderRadius: 8,
-    backgroundColor: '#fff',
+  logo: {
+    width: 90,
+    height: 90,
+    resizeMode: 'contain',
+    borderRadius: 45,
+    borderWidth: 2,
+    borderColor: '#D7A86E',
+  },
+  logoutBtn: {
+    backgroundColor: '#FFF3E0',
+    padding: 8,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: '#E0C097',
   },
-  title: { fontSize: 22, fontWeight: '800', color: '#2E7D32' },
+  title: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#C75B12',
+    textAlign: 'center',
+    marginVertical: 10,
+    letterSpacing: 0.5,
+  },
 
-  // Tabs
   tabContainer: {
     flexDirection: 'row',
     marginHorizontal: 16,
-    marginTop: 12,
     marginBottom: 16,
-    borderRadius: 8,
+    borderRadius: 14,
     overflow: 'hidden',
-    backgroundColor: '#E0E0E0',
+    backgroundColor: '#F3E5AB',
+    borderWidth: 1,
+    borderColor: '#E0C097',
   },
-  tabButton: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  activeTab: { backgroundColor: '#2E7D32' },
-  tabText: { fontSize: 16, fontWeight: '500', color: '#666666' },
-  activeTabText: { color: '#FFFFFF', fontWeight: '700' },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  activeTab: {
+    backgroundColor: '#C75B12',
+  },
+  tabText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6B4F32',
+  },
+  activeTabText: {
+    color: '#FFF8E1',
+    fontWeight: '700',
+  },
 
-  // Sections
-  sectionTitle: { fontSize: 18, fontWeight: '800', color: '#333333', marginBottom: 16 },
+  contentContainer: { paddingHorizontal: 18 },
+  loader: { marginTop: 40 },
 
-  // Forms
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#5C4033',
+    marginBottom: 18,
+    textAlign: 'center',
+  },
+
   input: {
     borderWidth: 1,
-    borderColor: '#D0D0D0',
+    borderColor: '#E0C097',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 14,
     marginBottom: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#FFFDF6',
     fontSize: 16,
-    color: '#333333',
+    color: '#4E342E',
   },
   picker: {
     borderWidth: 1,
-    borderColor: '#D0D0D0',
-    borderRadius: 8,
+    borderColor: '#E0C097',
+    borderRadius: 14,
     marginBottom: 12,
-    backgroundColor: '#FFFFFF',
-    color: '#333333',
+    backgroundColor: '#FFFDF6',
+    color: '#4E342E',
   },
   imagePicker: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#FFF8E1',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: 'center',
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#2E7D32',
+    borderColor: '#D7A86E',
   },
-  imagePickerText: { color: '#2E7D32', fontSize: 16, fontWeight: '600' },
+  imagePickerText: {
+    color: '#C75B12',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   addButton: {
-    backgroundColor: '#F4B400',
+    backgroundColor: '#C75B12',
     padding: 14,
-    borderRadius: 8,
+    borderRadius: 14,
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 26,
   },
-  addButtonText: { color: '#333333', fontSize: 16, fontWeight: '800' },
+  addButtonText: {
+    color: '#FFF8E1',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  previewWrap: { alignItems: 'center', marginBottom: 14 },
+  preview: {
+    width: 180,
+    height: 130,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E0C097',
+  },
+  list: { paddingBottom: 30 },
 
-  previewWrap: { alignItems: 'center', marginBottom: 12 },
-  preview: { width: 180, height: 130, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB' },
-
-  // Lists
-  list: { paddingBottom: 20 },
-
-  // Product item
   itemContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
+    backgroundColor: '#FFFDF6',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 14,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#E0C097',
   },
   image: {
-    width: 74,
-    height: 74,
-    marginRight: 12,
-    borderRadius: 8,
+    width: 80,
+    height: 80,
+    marginRight: 14,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E0E0E0',
-    backgroundColor: '#F3F4F6',
+    borderColor: '#E0C097',
+    backgroundColor: '#FFF3E0',
   },
   noImage: { justifyContent: 'center', alignItems: 'center' },
   infoContainer: { flex: 1 },
-  name: { fontSize: 16, fontWeight: '700', color: '#333333' },
-  desc: { fontSize: 13, color: '#6B7280', marginTop: 2 },
-  price: { fontSize: 14, color: '#111827', marginTop: 2, fontWeight: '700' },
-  category: { fontSize: 13, color: '#6B7280', marginTop: 4 },
-
-  deleteButton: { backgroundColor: '#D32F2F', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6 },
-  deleteButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-
-  // Users list
-  userItem: {
-    backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-    elevation: 2,
+  name: { fontSize: 16, fontWeight: '700', color: '#5C4033' },
+  desc: { fontSize: 13, color: '#8C6A4B', marginTop: 2 },
+  price: { fontSize: 14, color: '#4E342E', marginTop: 4, fontWeight: '700' },
+  category: { fontSize: 13, color: '#8C6A4B', marginTop: 4 },
+  deleteButton: {
+    backgroundColor: '#D32F2F',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
   },
-  userName: { fontSize: 16, fontWeight: '700', color: '#333333' },
-  userEmail: { fontSize: 14, color: '#6B7280', marginTop: 4 },
-  userPoints: { fontSize: 14, color: '#2E7D32', marginTop: 4, fontWeight: '700' },
+  deleteButtonText: {
+    color: '#FFFDF6',
+    fontSize: 14,
+    fontWeight: '700',
+  },
 
-  // badges + small buttons
+  userItem: {
+    backgroundColor: '#FFFDF6',
+    padding: 18,
+    borderRadius: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+  },
+  userName: { fontSize: 16, fontWeight: '700', color: '#5C4033' },
+  userEmail: { fontSize: 14, color: '#8C6A4B', marginTop: 4 },
+  userPoints: { fontSize: 14, color: '#C75B12', marginTop: 4, fontWeight: '700' },
+
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  badgeOk: { backgroundColor: '#DCFCE7' },
-  badgeWarn: { backgroundColor: '#FEF3C7' },
-  badgeText: { fontSize: 11, fontWeight: '700', color: '#111827' },
+  badgeOk: { backgroundColor: '#E8F5E9' },
+  badgeWarn: { backgroundColor: '#FFF8E1' },
+  badgeText: { fontSize: 11, fontWeight: '700', color: '#4E342E' },
 
   smallBtn: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8 },
-  approveBtn: { backgroundColor: '#E5E7EB' },
-  pointsBtn: { backgroundColor: '#F4B400' },
-  smallBtnText: { fontSize: 12, fontWeight: '800', color: '#111827' },
+  approveBtn: { backgroundColor: '#FFE0B2' },
+  pointsBtn: { backgroundColor: '#FFD54F' },
+  smallBtnText: { fontSize: 12, fontWeight: '800', color: '#4E342E' },
 
-  form: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 8, marginTop: 16, elevation: 2 },
-  subtitle: { fontSize: 18, fontWeight: '700', color: '#333333', marginBottom: 16, textAlign: 'center' },
-  emptyText: { fontSize: 16, color: '#6B7280', textAlign: 'center', marginVertical: 20 },
-
-  // ✅ Botones genéricos usados en sección Usuarios
+  form: {
+    backgroundColor: '#FFFDF6',
+    padding: 18,
+    borderRadius: 14,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+  },
+  subtitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#5C4033',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
   button: {
-    backgroundColor: '#FFD700',
+    backgroundColor: '#FFD54F',
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
     marginTop: 10,
   },
-  buttonText: {
-    color: '#333333',
-    fontSize: 16,
-    fontWeight: '800',
-  },
+  buttonText: { color: '#4E342E', fontSize: 16, fontWeight: '800' },
   cancelButton: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#FFF3E0',
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
     marginTop: 10,
     borderWidth: 1,
