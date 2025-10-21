@@ -2,15 +2,18 @@
   "emulators": {
     "auth": {
       "host": "127.0.0.1",
-      "port": 9100
+      "port": 9100,
+      "dataDir": "firebase_data/auth"
     },
     "firestore": {
       "host": "127.0.0.1",
-      "port": 8085
+      "port": 8085,
+      "dataDir": "firebase_data/firestore"
     },
     "storage": {
       "host": "127.0.0.1",
-      "port": 9200
+      "port": 9200,
+      "dataDir": "firebase_data/storage"
     },
     "ui": {
       "enabled": true,
