@@ -10,6 +10,11 @@ import {
   query,
   updateDoc,
 } from 'firebase/firestore';
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+} from 'firebase/storage';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -27,8 +32,7 @@ import {
 import { Picker } from '@react-native-picker/picker';
 import { useRouter } from 'expo-router';
 import { getAuth, signOut } from 'firebase/auth';
-import { db } from '../../firebaseConfig';
-import { supabase } from '../../supabaseClient';
+import { db, storage } from '../../firebaseConfig';
 
 interface Product {
   id: string;
@@ -93,23 +97,10 @@ export default function AdminDashboard() {
     try {
       const q = query(collection(db, 'products'), orderBy('name', 'asc'));
       const snapshot = await getDocs(q);
-      const data: Product[] = snapshot.docs.map((d) => {
-        const p = d.data() as Product;
-        let imageUrl = (p.imageUrl || '') as string;
-
-        if (imageUrl && !imageUrl.startsWith('http')) {
-          imageUrl = `https://xfhmqxgbrmpijmwcsgkn.supabase.co/storage/v1/object/public/products/${imageUrl}`;
-        }
-
-        return {
-          id: d.id,
-          name: p.name,
-          price: p.price,
-          category: p.category || 'Otros',
-          imageUrl: imageUrl || null,
-          description: p.description || '',
-        };
-      });
+      const data: Product[] = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Product),
+      }));
       setProducts(data);
     } catch (error) {
       console.error('Error fetching products:', error);
@@ -123,7 +114,10 @@ export default function AdminDashboard() {
     setLoading(true);
     try {
       const snapshot = await getDocs(collection(db, 'users'));
-      const data = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<User, 'id'>) })) as User[];
+      const data = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<User, 'id'>),
+      })) as User[];
       setUsers(data);
     } catch (error) {
       console.error(error);
@@ -157,7 +151,8 @@ export default function AdminDashboard() {
     }
   };
 
-  const uploadImageToSupabase = async (): Promise<string | null> => {
+  // 📸 Subir imagen a Firebase Storage
+  const uploadImageToFirebase = async (): Promise<string | null> => {
     if (!imageUri) return null;
     setUploading(true);
     try {
@@ -165,18 +160,12 @@ export default function AdminDashboard() {
       const blob = await response.blob();
       const fileName = `product_${Date.now()}.jpg`;
 
-      const { error } = await supabase.storage
-        .from('products')
-        .upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
-
-      if (error) {
-        Alert.alert('Error', `No se pudo subir la imagen: ${error.message}`);
-        return null;
-      }
-
-      const { data } = supabase.storage.from('products').getPublicUrl(fileName);
-      return data?.publicUrl ?? null;
+      const storageRef = ref(storage, `products/${fileName}`);
+      await uploadBytes(storageRef, blob);
+      const downloadUrl = await getDownloadURL(storageRef);
+      return downloadUrl;
     } catch (error: any) {
+      console.error('Error al subir la imagen:', error);
       Alert.alert('Error', `Error al subir la imagen: ${error.message}`);
       return null;
     } finally {
@@ -199,7 +188,7 @@ export default function AdminDashboard() {
     try {
       let imageUrl: string | null = null;
       if (imageUri) {
-        imageUrl = await uploadImageToSupabase();
+        imageUrl = await uploadImageToFirebase();
       }
 
       await addDoc(collection(db, 'products'), {
@@ -270,9 +259,11 @@ export default function AdminDashboard() {
 
     const newTotal = (selectedUser.points ?? 0) + Number(pointsToAdd);
     try {
-      const ref = doc(db, 'users', selectedUser.id);
-      await updateDoc(ref, { points: newTotal });
-      setUsers((prev) => prev.map((u) => (u.id === selectedUser.id ? { ...u, points: newTotal } : u)));
+      const refUser = doc(db, 'users', selectedUser.id);
+      await updateDoc(refUser, { points: newTotal });
+      setUsers((prev) =>
+        prev.map((u) => (u.id === selectedUser.id ? { ...u, points: newTotal } : u))
+      );
       setSelectedUser(null);
       setPointsToAdd('');
       Alert.alert('Éxito', 'Puntos asignados correctamente');
@@ -284,10 +275,12 @@ export default function AdminDashboard() {
 
   const handleToggleApproved = async (user: User) => {
     try {
-      const ref = doc(db, 'users', user.id);
+      const refUser = doc(db, 'users', user.id);
       const next = !user.approved;
-      await updateDoc(ref, { approved: next });
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, approved: next } : u)));
+      await updateDoc(refUser, { approved: next });
+      setUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, approved: next } : u))
+      );
     } catch (e) {
       console.error(e);
       Alert.alert('Error', 'No se pudo cambiar el estado del usuario');
@@ -387,9 +380,9 @@ export default function AdminDashboard() {
       ) : (
         <ScrollView style={styles.contentContainer} keyboardShouldPersistTaps="handled">
           {activeTab === 'products'
-            ? <>
+            ? (
+              <>
                 <Text style={styles.sectionTitle}>Gestión de Productos</Text>
-                {/* Formulario */}
                 <TextInput style={styles.input} placeholder="Nombre del producto" value={newProductName} onChangeText={setNewProductName} />
                 <TextInput style={styles.input} placeholder="Precio en puntos" keyboardType="numeric" value={newProductPrice} onChangeText={setNewProductPrice} />
                 <Picker selectedValue={newProductCategory} onValueChange={(v) => setNewProductCategory(v)} style={styles.picker}>
@@ -413,7 +406,9 @@ export default function AdminDashboard() {
                 </TouchableOpacity>
                 <FlatList data={products} keyExtractor={(item) => item.id} renderItem={renderProductItem} scrollEnabled={false} contentContainerStyle={styles.list} />
               </>
-            : <>
+            )
+            : (
+              <>
                 <Text style={styles.sectionTitle}>Gestión de Usuarios</Text>
                 <FlatList data={users} keyExtractor={(item) => item.id} renderItem={renderUserItem} scrollEnabled={false} contentContainerStyle={styles.list} />
                 <TouchableOpacity style={styles.addButton} onPress={() => setAddingUser(true)}>
@@ -444,7 +439,8 @@ export default function AdminDashboard() {
                     </TouchableOpacity>
                   </View>
                 )}
-              </>}
+              </>
+            )}
         </ScrollView>
       )}
     </ImageBackground>
@@ -454,7 +450,6 @@ export default function AdminDashboard() {
 const styles = StyleSheet.create({
   background: { flex: 1 },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,243,224,0.55)' },
-
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -485,7 +480,6 @@ const styles = StyleSheet.create({
     marginVertical: 10,
     letterSpacing: 0.5,
   },
-
   tabContainer: {
     flexDirection: 'row',
     marginHorizontal: 16,
@@ -501,22 +495,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
   },
-  activeTab: {
-    backgroundColor: '#C75B12',
-  },
-  tabText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6B4F32',
-  },
-  activeTabText: {
-    color: '#FFF8E1',
-    fontWeight: '700',
-  },
-
+  activeTab: { backgroundColor: '#C75B12' },
+  tabText: { fontSize: 16, fontWeight: '600', color: '#6B4F32' },
+  activeTabText: { color: '#FFF8E1', fontWeight: '700' },
   contentContainer: { paddingHorizontal: 18 },
   loader: { marginTop: 40 },
-
   sectionTitle: {
     fontSize: 20,
     fontWeight: '800',
@@ -524,7 +507,6 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     textAlign: 'center',
   },
-
   input: {
     borderWidth: 1,
     borderColor: '#E0C097',
@@ -578,7 +560,6 @@ const styles = StyleSheet.create({
     borderColor: '#E0C097',
   },
   list: { paddingBottom: 30 },
-
   itemContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -616,7 +597,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-
   userItem: {
     backgroundColor: '#FFFDF6',
     padding: 18,
@@ -628,17 +608,14 @@ const styles = StyleSheet.create({
   userName: { fontSize: 16, fontWeight: '700', color: '#5C4033' },
   userEmail: { fontSize: 14, color: '#8C6A4B', marginTop: 4 },
   userPoints: { fontSize: 14, color: '#C75B12', marginTop: 4, fontWeight: '700' },
-
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   badgeOk: { backgroundColor: '#E8F5E9' },
   badgeWarn: { backgroundColor: '#FFF8E1' },
   badgeText: { fontSize: 11, fontWeight: '700', color: '#4E342E' },
-
   smallBtn: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8 },
   approveBtn: { backgroundColor: '#FFE0B2' },
   pointsBtn: { backgroundColor: '#FFD54F' },
   smallBtnText: { fontSize: 12, fontWeight: '800', color: '#4E342E' },
-
   form: {
     backgroundColor: '#FFFDF6',
     padding: 18,

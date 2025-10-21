@@ -67,3 +67,5 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 // Hook para consumir fácilmente el AuthContext
 export const useAuth = () => useContext(AuthContext);
+
+export default AuthProvider;

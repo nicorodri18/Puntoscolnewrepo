@@ -1,17 +1,31 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore'; 
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyCAft1AHFE9nxv8Pay7GTwPPEB-G12EmmM',
-  authDomain: 'chat-gpt-e2de9.firebaseapp.com',
-  projectId: 'chat-gpt-e2de9',
-  storageBucket: 'chat-gpt-e2de9.appspot.com',
-  messagingSenderId: '869291160513',
-  appId: '1:869291160513:web:d5d4fbfff008ea225c7540'
+  apiKey: "fake-api-key",
+  authDomain: "chat-gpt-e2de9.firebaseapp.com",
+  projectId: "chat-gpt-e2de9",
+  storageBucket: "chat-gpt-e2de9.appspot.com",
+  messagingSenderId: "1234567890",
+  appId: "1:1234567890:web:abcdef123456"
 };
 
 // Inicializar Firebase
 const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);  
+
+// Inicializar servicios
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+// Conexión a emuladores locales (solo en desarrollo)
+if (process.env.EXPO_PUBLIC_USE_EMULATORS === 'true' || __DEV__) {
+  console.log('⚡ Conectando a emuladores locales...');
+  connectAuthEmulator(auth, 'http://127.0.0.1:9100');
+  connectFirestoreEmulator(db, '127.0.0.1', 8085);
+  connectStorageEmulator(storage, '127.0.0.1', 9200);
+}
+
+export { app, auth, db, storage };
