@@ -1,6 +1,7 @@
+// app/_layout.tsx
 import { Stack } from 'expo-router';
 import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View, Text, TouchableOpacity } from 'react-native';
 import { auth, db } from '../firebaseConfig';
@@ -22,26 +23,28 @@ export default function Layout() {
 
       if (user) {
         try {
-          const ref = doc(db, 'users', user.uid);
-          const snap = await getDoc(ref);
+          // 🔍 Buscar al usuario por su email en la colección "users"
+          const q = query(collection(db, 'users'), where('email', '==', user.email));
+          const snap = await getDocs(q);
 
-          if (snap.exists()) {
-            const data = snap.data() as UserData;
+          if (!snap.empty) {
+            const data = snap.docs[0].data() as UserData;
             setApproved(data.approved ?? false);
             setRole(data.role ?? 'user');
           } else {
-            // Si no existe en Firestore, asumimos user común pendiente
+            // Si no se encuentra, se asume usuario pendiente
             setApproved(false);
             setRole('user');
           }
         } catch (e) {
-          console.error('Error leyendo user:', e);
+          console.error('Error leyendo usuario en Firestore:', e);
           setApproved(false);
         }
       } else {
         setApproved(null);
         setRole(null);
       }
+
       setLoading(false);
     });
 
@@ -67,7 +70,7 @@ export default function Layout() {
     );
   }
 
-  // No hay usuario autenticado → Login
+  // 🔐 No hay usuario autenticado → pantalla de login
   if (!firebaseUser) {
     return (
       <Stack screenOptions={{ headerShown: false }}>
@@ -76,11 +79,12 @@ export default function Layout() {
     );
   }
 
+  // 👑 Determinar si el usuario es admin
   const isAdmin =
     firebaseUser.email === 'admin@gmail.com' ||
     role === 'admin';
 
-  // Si no es admin y no está aprobado → mensaje y botón
+  // ⛔ Usuario no aprobado
   if (!isAdmin && approved === false) {
     return (
       <View
@@ -121,7 +125,7 @@ export default function Layout() {
     );
   }
 
-  // Admin → dashboard
+  // 👨‍💼 Si es admin → dashboard de administración
   if (isAdmin) {
     return (
       <Stack screenOptions={{ headerShown: false }}>
@@ -130,7 +134,7 @@ export default function Layout() {
     );
   }
 
-  // Usuario aprobado → menú cliente
+  // 👤 Usuario aprobado → menú de cliente
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="client/MenuScreen" />
