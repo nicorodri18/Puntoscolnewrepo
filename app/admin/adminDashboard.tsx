@@ -23,6 +23,7 @@ import {
   Image,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -51,8 +52,21 @@ interface User {
   approved?: boolean;
 }
 
+interface Coupon {
+  id: string;
+  code: string;
+  description?: string;
+  discountType: 'percent' | 'fixed';
+  amount: number;
+  isActive: boolean;
+  expiresAt?: string | null;
+  usageLimit?: number | null;
+  usageCount?: number;
+  isWelcome?: boolean;
+}
+
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<'products' | 'users'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'users' | 'coupons'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -72,6 +86,16 @@ export default function AdminDashboard() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
 
+  // cupones
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [newCouponCode, setNewCouponCode] = useState('');
+  const [newCouponDescription, setNewCouponDescription] = useState('');
+  const [newCouponType, setNewCouponType] = useState<'percent' | 'fixed'>('percent');
+  const [newCouponAmount, setNewCouponAmount] = useState('');
+  const [newCouponUsageLimit, setNewCouponUsageLimit] = useState('');
+  const [newCouponExpiresAt, setNewCouponExpiresAt] = useState('');
+  const [newCouponWelcome, setNewCouponWelcome] = useState(false);
+
   const categories = ['Arepas', 'Bebidas', 'Salsas', 'Combos', 'Postres', 'Merch', 'Otros'];
 
   const router = useRouter();
@@ -79,7 +103,8 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (activeTab === 'products') fetchProducts();
-    else fetchUsers();
+    else if (activeTab === 'users') fetchUsers();
+    else fetchCoupons();
   }, [activeTab]);
 
   const handleLogout = async () => {
@@ -97,10 +122,13 @@ export default function AdminDashboard() {
     try {
       const q = query(collection(db, 'products'), orderBy('name', 'asc'));
       const snapshot = await getDocs(q);
-      const data: Product[] = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Product),
-      }));
+      const data: Product[] = snapshot.docs.map((d) => {
+        const productData = d.data() as Omit<Product, 'id'>;
+        return {
+          id: d.id,
+          ...productData,
+        };
+      });
       setProducts(data);
     } catch (error) {
       console.error('Error fetching products:', error);
@@ -122,6 +150,34 @@ export default function AdminDashboard() {
     } catch (error) {
       console.error(error);
       Alert.alert('Error', 'No se pudieron obtener los usuarios');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCoupons = async () => {
+    setLoading(true);
+    try {
+      const snapshot = await getDocs(collection(db, 'coupons'));
+      const data: Coupon[] = snapshot.docs.map((d) => {
+        const couponData = d.data() as any;
+        return {
+          id: d.id,
+          code: (couponData.code || '').toUpperCase(),
+          description: couponData.description || '',
+          discountType: couponData.discountType === 'fixed' ? 'fixed' : 'percent',
+          amount: Number(couponData.amount) || 0,
+          isActive: couponData.isActive !== false,
+          expiresAt: couponData.expiresAt || null,
+          usageLimit: couponData.usageLimit != null ? Number(couponData.usageLimit) : null,
+          usageCount: Number(couponData.usageCount || 0),
+          isWelcome: couponData.isWelcome ?? false,
+        };
+      });
+      setCoupons(data);
+    } catch (error) {
+      console.error('Error fetching coupons:', error);
+      Alert.alert('Error', 'No se pudieron obtener los cupones');
     } finally {
       setLoading(false);
     }
@@ -287,6 +343,101 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleAddCoupon = async () => {
+    const code = newCouponCode.trim().toUpperCase();
+    const amount = Number(newCouponAmount);
+    if (!code || Number.isNaN(amount) || amount <= 0) {
+      Alert.alert('Error', 'Ingresa código y monto válidos.');
+      return;
+    }
+    if (newCouponType === 'percent' && (amount <= 0 || amount > 100)) {
+      Alert.alert('Error', 'El porcentaje debe estar entre 1 y 100.');
+      return;
+    }
+
+    let usageLimit: number | null = null;
+    if (newCouponUsageLimit) {
+      const parsedLimit = Number(newCouponUsageLimit);
+      if (Number.isNaN(parsedLimit) || parsedLimit < 1) {
+        Alert.alert('Error', 'El límite de usos debe ser un número positivo.');
+        return;
+      }
+      usageLimit = parsedLimit;
+    }
+
+    let expiresAt: string | null = null;
+    if (newCouponExpiresAt) {
+      const parsedDate = new Date(newCouponExpiresAt);
+      if (Number.isNaN(parsedDate.getTime())) {
+        Alert.alert('Error', 'Fecha de expiración inválida. Usa AAAA-MM-DD.');
+        return;
+      }
+      expiresAt = parsedDate.toISOString();
+    }
+
+    try {
+      await addDoc(collection(db, 'coupons'), {
+        code,
+        description: newCouponDescription.trim(),
+        discountType: newCouponType,
+        amount,
+        isActive: true,
+        expiresAt,
+        usageLimit,
+        usageCount: 0,
+        isWelcome: newCouponWelcome,
+      });
+      setNewCouponCode('');
+      setNewCouponDescription('');
+      setNewCouponType('percent');
+      setNewCouponAmount('');
+      setNewCouponUsageLimit('');
+      setNewCouponExpiresAt('');
+      setNewCouponWelcome(false);
+      Alert.alert('Éxito', 'Cupón creado correctamente');
+      await fetchCoupons();
+    } catch (error) {
+      console.error('Error al crear el cupón:', error);
+      Alert.alert('Error', 'No se pudo crear el cupón');
+    }
+  };
+
+  const handleToggleCouponActive = async (coupon: Coupon) => {
+    try {
+      const refCoupon = doc(db, 'coupons', coupon.id);
+      await updateDoc(refCoupon, { isActive: !coupon.isActive });
+      setCoupons((prev) =>
+        prev.map((c) => (c.id === coupon.id ? { ...c, isActive: !coupon.isActive } : c)),
+      );
+    } catch (error) {
+      console.error('Error al actualizar cupón:', error);
+      Alert.alert('Error', 'No se pudo actualizar el estado del cupón');
+    }
+  };
+
+  const handleDeleteCoupon = async (couponId: string) => {
+    Alert.alert(
+      'Eliminar cupón',
+      '¿Estás seguro de eliminar este cupón?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'coupons', couponId));
+              setCoupons((prev) => prev.filter((c) => c.id !== couponId));
+            } catch (error) {
+              console.error('Error al eliminar cupón:', error);
+              Alert.alert('Error', 'No se pudo eliminar el cupón');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const renderProductItem = ({ item }: { item: Product }) => (
     <View style={styles.itemContainer}>
       {item.imageUrl ? (
@@ -341,6 +492,48 @@ export default function AdminDashboard() {
     </TouchableOpacity>
   );
 
+  const renderCouponItem = ({ item }: { item: Coupon }) => {
+    const discountLabel =
+      item.discountType === 'percent' ? `${item.amount}%` : `${item.amount} pts`;
+    const expiresLabel = item.expiresAt
+      ? new Date(item.expiresAt).toLocaleDateString('es-ES')
+      : 'Sin expiración';
+    return (
+      <View style={styles.couponItem}>
+        <View style={styles.couponHeader}>
+          <Text style={styles.couponCode}>{item.code}</Text>
+          <View style={[styles.badge, item.isActive ? styles.badgeOk : styles.badgeWarn]}>
+            <Text style={styles.badgeText}>{item.isActive ? 'Activo' : 'Inactivo'}</Text>
+          </View>
+        </View>
+        {item.description ? <Text style={styles.couponDesc}>{item.description}</Text> : null}
+        <Text style={styles.couponDetail}>Descuento: {discountLabel}</Text>
+        <Text style={styles.couponDetail}>
+          Uso: {item.usageCount ?? 0}
+          {item.usageLimit ? ` / ${item.usageLimit}` : ''}
+        </Text>
+        <Text style={styles.couponDetail}>Expira: {expiresLabel}</Text>
+        {item.isWelcome ? (
+          <Text style={styles.couponWelcome}>Cupón de bienvenida</Text>
+        ) : null}
+        <View style={styles.couponActions}>
+          <TouchableOpacity
+            style={[styles.smallBtn, styles.pointsBtn]}
+            onPress={() => handleToggleCouponActive(item)}
+          >
+            <Text style={styles.smallBtnText}>{item.isActive ? 'Desactivar' : 'Activar'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.smallBtn, styles.deleteCouponBtn]}
+            onPress={() => handleDeleteCoupon(item.id)}
+          >
+            <Text style={styles.smallBtnText}>Eliminar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   return (
     <ImageBackground
       source={require('../../assets/images/fondo-arepabuelas.png')}
@@ -367,80 +560,216 @@ export default function AdminDashboard() {
             Productos
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'users' && styles.activeTab]}
-          onPress={() => setActiveTab('users')}
-        >
-          <Text style={[styles.tabText, activeTab === 'users' && styles.activeTabText]}>Usuarios</Text>
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity
+        style={[styles.tabButton, activeTab === 'users' && styles.activeTab]}
+        onPress={() => setActiveTab('users')}
+      >
+        <Text style={[styles.tabText, activeTab === 'users' && styles.activeTabText]}>Usuarios</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.tabButton, activeTab === 'coupons' && styles.activeTab]}
+        onPress={() => setActiveTab('coupons')}
+      >
+        <Text style={[styles.tabText, activeTab === 'coupons' && styles.activeTabText]}>Cupones</Text>
+      </TouchableOpacity>
+    </View>
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#C75B12" style={styles.loader} />
-      ) : (
+    {loading ? (
+      <ActivityIndicator size="large" color="#C75B12" style={styles.loader} />
+    ) : (
         <ScrollView style={styles.contentContainer} keyboardShouldPersistTaps="handled">
-          {activeTab === 'products'
-            ? (
-              <>
-                <Text style={styles.sectionTitle}>Gestión de Productos</Text>
-                <TextInput style={styles.input} placeholder="Nombre del producto" value={newProductName} onChangeText={setNewProductName} />
-                <TextInput style={styles.input} placeholder="Precio en puntos" keyboardType="numeric" value={newProductPrice} onChangeText={setNewProductPrice} />
-                <Picker selectedValue={newProductCategory} onValueChange={(v) => setNewProductCategory(v)} style={styles.picker}>
-                  <Picker.Item label="Selecciona una categoría" value="" />
-                  {categories.map((c) => <Picker.Item key={c} label={c} value={c} />)}
+          {activeTab === 'products' ? (
+            <>
+              <Text style={styles.sectionTitle}>Gestión de Productos</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Nombre del producto"
+                value={newProductName}
+                onChangeText={setNewProductName}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Precio en puntos"
+                keyboardType="numeric"
+                value={newProductPrice}
+                onChangeText={setNewProductPrice}
+              />
+              <Picker
+                selectedValue={newProductCategory}
+                onValueChange={(v) => setNewProductCategory(v)}
+                style={styles.picker}
+              >
+                <Picker.Item label="Selecciona una categoría" value="" />
+                {categories.map((c) => (
+                  <Picker.Item key={c} label={c} value={c} />
+                ))}
+              </Picker>
+              <TextInput
+                style={[styles.input, styles.multilineInput]}
+                placeholder="Descripción (opcional)"
+                value={newProductDescription}
+                multiline
+                onChangeText={setNewProductDescription}
+              />
+              <TouchableOpacity style={styles.imagePicker} onPress={pickImage}>
+                <Text style={styles.imagePickerText}>
+                  {imageUri ? 'Cambiar imagen seleccionada' : 'Seleccionar imagen'}
+                </Text>
+              </TouchableOpacity>
+              {imageUri && (
+                <View style={styles.previewWrap}>
+                  <Image source={{ uri: imageUri }} style={styles.preview} />
+                  {uploading && <ActivityIndicator size="small" color="#C75B12" />}
+                </View>
+              )}
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={handleAddProduct}
+                disabled={uploading}
+              >
+                <Text style={styles.addButtonText}>
+                  {uploading ? 'Subiendo...' : 'Agregar Producto'}
+                </Text>
+              </TouchableOpacity>
+              <FlatList
+                data={products}
+                keyExtractor={(item) => item.id}
+                renderItem={renderProductItem}
+                scrollEnabled={false}
+                contentContainerStyle={styles.list}
+              />
+            </>
+          ) : activeTab === 'users' ? (
+            <>
+              <Text style={styles.sectionTitle}>Gestión de Usuarios</Text>
+              <FlatList
+                data={users}
+                keyExtractor={(item) => item.id}
+                renderItem={renderUserItem}
+                scrollEnabled={false}
+                contentContainerStyle={styles.list}
+              />
+              <TouchableOpacity style={styles.addButton} onPress={() => setAddingUser(true)}>
+                <Text style={styles.addButtonText}>+ Agregar nuevo usuario</Text>
+              </TouchableOpacity>
+              {addingUser && (
+                <View style={styles.form}>
+                  <Text style={styles.subtitle}>Nuevo Usuario</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Nombre"
+                    value={newUserName}
+                    onChangeText={setNewUserName}
+                  />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Correo"
+                    value={newUserEmail}
+                    onChangeText={setNewUserEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity style={styles.button} onPress={handleAddUser}>
+                    <Text style={styles.buttonText}>Guardar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.cancelButton} onPress={() => setAddingUser(false)}>
+                    <Text style={styles.cancelButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              {selectedUser && (
+                <View style={styles.form}>
+                  <Text style={styles.subtitle}>Asignar puntos a {selectedUser.name}</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Puntos a agregar"
+                    value={pointsToAdd}
+                    onChangeText={setPointsToAdd}
+                    keyboardType="numeric"
+                  />
+                  <TouchableOpacity style={styles.button} onPress={handleAddPoints}>
+                    <Text style={styles.buttonText}>Asignar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={() => setSelectedUser(null)}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </>
+          ) : (
+            <>
+              <Text style={styles.sectionTitle}>Gestión de Cupones</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Código (ej. BIENVENIDA)"
+                value={newCouponCode}
+                autoCapitalize="characters"
+                onChangeText={(value) => setNewCouponCode(value.toUpperCase())}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Descripción del cupón"
+                value={newCouponDescription}
+                onChangeText={setNewCouponDescription}
+              />
+              <View style={styles.inlineInputs}>
+                <Picker
+                  selectedValue={newCouponType}
+                  onValueChange={(value) => setNewCouponType(value as 'percent' | 'fixed')}
+                  style={[styles.picker, styles.inlinePicker]}
+                >
+                  <Picker.Item label="Porcentaje (%)" value="percent" />
+                  <Picker.Item label="Monto fijo" value="fixed" />
                 </Picker>
-                <TextInput style={[styles.input, { height: 90, textAlignVertical: 'top' }]} placeholder="Descripción (opcional)" value={newProductDescription} multiline onChangeText={setNewProductDescription} />
-                <TouchableOpacity style={styles.imagePicker} onPress={pickImage}>
-                  <Text style={styles.imagePickerText}>
-                    {imageUri ? 'Cambiar imagen seleccionada' : 'Seleccionar imagen'}
-                  </Text>
-                </TouchableOpacity>
-                {imageUri && (
-                  <View style={styles.previewWrap}>
-                    <Image source={{ uri: imageUri }} style={styles.preview} />
-                    {uploading && <ActivityIndicator size="small" color="#C75B12" />}
-                  </View>
-                )}
-                <TouchableOpacity style={styles.addButton} onPress={handleAddProduct} disabled={uploading}>
-                  <Text style={styles.addButtonText}>{uploading ? 'Subiendo...' : 'Agregar Producto'}</Text>
-                </TouchableOpacity>
-                <FlatList data={products} keyExtractor={(item) => item.id} renderItem={renderProductItem} scrollEnabled={false} contentContainerStyle={styles.list} />
-              </>
-            )
-            : (
-              <>
-                <Text style={styles.sectionTitle}>Gestión de Usuarios</Text>
-                <FlatList data={users} keyExtractor={(item) => item.id} renderItem={renderUserItem} scrollEnabled={false} contentContainerStyle={styles.list} />
-                <TouchableOpacity style={styles.addButton} onPress={() => setAddingUser(true)}>
-                  <Text style={styles.addButtonText}>+ Agregar nuevo usuario</Text>
-                </TouchableOpacity>
-                {addingUser && (
-                  <View style={styles.form}>
-                    <Text style={styles.subtitle}>Nuevo Usuario</Text>
-                    <TextInput style={styles.input} placeholder="Nombre" value={newUserName} onChangeText={setNewUserName} />
-                    <TextInput style={styles.input} placeholder="Correo" value={newUserEmail} onChangeText={setNewUserEmail} keyboardType="email-address" autoCapitalize="none" />
-                    <TouchableOpacity style={styles.button} onPress={handleAddUser}>
-                      <Text style={styles.buttonText}>Guardar</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.cancelButton} onPress={() => setAddingUser(false)}>
-                      <Text style={styles.cancelButtonText}>Cancelar</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-                {selectedUser && (
-                  <View style={styles.form}>
-                    <Text style={styles.subtitle}>Asignar puntos a {selectedUser.name}</Text>
-                    <TextInput style={styles.input} placeholder="Puntos a agregar" value={pointsToAdd} onChangeText={setPointsToAdd} keyboardType="numeric" />
-                    <TouchableOpacity style={styles.button} onPress={handleAddPoints}>
-                      <Text style={styles.buttonText}>Asignar</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.cancelButton} onPress={() => setSelectedUser(null)}>
-                      <Text style={styles.cancelButtonText}>Cancelar</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </>
-            )}
+                <TextInput
+                  style={[styles.input, styles.inlineInput]}
+                  placeholder={newCouponType === 'percent' ? 'Porcentaje' : 'Puntos'}
+                  value={newCouponAmount}
+                  keyboardType="numeric"
+                  onChangeText={setNewCouponAmount}
+                />
+              </View>
+              <TextInput
+                style={styles.input}
+                placeholder="Límite de usos (opcional)"
+                value={newCouponUsageLimit}
+                keyboardType="numeric"
+                onChangeText={setNewCouponUsageLimit}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Expira (AAAA-MM-DD opcional)"
+                value={newCouponExpiresAt}
+                onChangeText={setNewCouponExpiresAt}
+              />
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>Cupón de bienvenida</Text>
+                <Switch
+                  value={newCouponWelcome}
+                  onValueChange={setNewCouponWelcome}
+                  trackColor={{ true: '#C75B12', false: '#D7CCC8' }}
+                  thumbColor={newCouponWelcome ? '#FFF8E1' : '#F5F5F5'}
+                />
+              </View>
+              <TouchableOpacity style={styles.addButton} onPress={handleAddCoupon}>
+                <Text style={styles.addButtonText}>Guardar cupón</Text>
+              </TouchableOpacity>
+              {coupons.length === 0 ? (
+                <Text style={styles.emptyCoupons}>No hay cupones registrados todavía.</Text>
+              ) : (
+                <FlatList
+                  data={coupons}
+                  keyExtractor={(item) => item.id}
+                  renderItem={renderCouponItem}
+                  scrollEnabled={false}
+                  contentContainerStyle={styles.list}
+                />
+              )}
+            </>
+          )}
         </ScrollView>
       )}
     </ImageBackground>
@@ -517,6 +846,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#4E342E',
   },
+  multilineInput: { height: 90, textAlignVertical: 'top' },
   picker: {
     borderWidth: 1,
     borderColor: '#E0C097',
@@ -560,6 +890,33 @@ const styles = StyleSheet.create({
     borderColor: '#E0C097',
   },
   list: { paddingBottom: 30 },
+  inlineInputs: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  inlinePicker: { flex: 1, marginRight: 10 },
+  inlineInput: { flex: 1 },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFF3E0',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+  },
+  switchLabel: { fontSize: 15, fontWeight: '600', color: '#5C4033' },
+  emptyCoupons: {
+    textAlign: 'center',
+    color: '#8C6A4B',
+    fontSize: 14,
+    marginTop: 12,
+    backgroundColor: '#FFF8E1',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+  },
   itemContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -616,6 +973,31 @@ const styles = StyleSheet.create({
   approveBtn: { backgroundColor: '#FFE0B2' },
   pointsBtn: { backgroundColor: '#FFD54F' },
   smallBtnText: { fontSize: 12, fontWeight: '800', color: '#4E342E' },
+  deleteCouponBtn: { backgroundColor: '#FFCDD2', marginLeft: 10 },
+  couponItem: {
+    backgroundColor: '#FFFDF6',
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+  },
+  couponHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  couponCode: { fontSize: 16, fontWeight: '800', color: '#C75B12' },
+  couponDesc: { color: '#6B4F32', marginBottom: 6 },
+  couponDetail: { color: '#5C4033', fontSize: 13, marginBottom: 4 },
+  couponWelcome: {
+    color: '#388E3C',
+    fontWeight: '700',
+    fontSize: 12,
+    marginBottom: 6,
+  },
+  couponActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8, alignItems: 'center' },
   form: {
     backgroundColor: '#FFFDF6',
     padding: 18,

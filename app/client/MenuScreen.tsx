@@ -1,16 +1,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { getAuth, signOut } from 'firebase/auth';
-import { collection, doc, getDocs, orderBy, query, updateDoc, where } from 'firebase/firestore';
-import React, { useEffect, useState } from 'react';
+import { collection, doc, getDocs, orderBy, query, updateDoc, where, increment } from 'firebase/firestore';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
   ImageBackground,
@@ -37,11 +41,32 @@ interface UserData {
   email: string;
 }
 
+interface Coupon {
+  id: string;
+  code: string;
+  description?: string;
+  discountType: 'percent' | 'fixed';
+  amount: number;
+  isActive: boolean;
+  expiresAt?: string | null;
+  usageLimit?: number | null;
+  usageCount?: number;
+  isWelcome?: boolean;
+}
+
+type PaymentSummary =
+  | { method: 'points'; pointsUsed: number }
+  | { method: 'card'; cardBrand: string; last4: string; processedAt: string };
+
 interface PurchaseHistory {
   id: string;
   items: CartItem[];
   date: string;
   total: number;
+  subtotal?: number;
+  discount?: number;
+  couponCode?: string;
+  payment?: PaymentSummary;
 }
 
 export default function MenuScreen() {
@@ -54,7 +79,18 @@ export default function MenuScreen() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistory[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [activeSection, setActiveSection] = useState<'catalog' | 'home' | 'points' | 'profile'>('catalog');
+  const [availableCoupons, setAvailableCoupons] = useState<Coupon[]>([]);
+  const [couponCodeInput, setCouponCodeInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponSuccess, setCouponSuccess] = useState<string | null>(null);
+  const [processingRedeem, setProcessingRedeem] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [cardholderName, setCardholderName] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [processingPayment, setProcessingPayment] = useState(false);
 
   const router = useRouter();
   const auth = getAuth();
@@ -62,11 +98,29 @@ export default function MenuScreen() {
 
   const HISTORY_STORAGE_KEY = '@LocalPurchaseHistory';
 
+  const cartSubtotal = useMemo(
+    () => cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+    [cart],
+  );
+  const couponDiscount = useMemo(
+    () => (appliedCoupon ? calculateCouponDiscount(cartSubtotal, appliedCoupon) : 0),
+    [cartSubtotal, appliedCoupon],
+  );
+  const payableTotal = useMemo(
+    () => Math.max(0, cartSubtotal - couponDiscount),
+    [cartSubtotal, couponDiscount],
+  );
+  const activeCoupons = useMemo(
+    () => availableCoupons.filter((coupon) => coupon.isActive && !isCouponExpired(coupon)),
+    [availableCoupons],
+  );
+
   useEffect(() => {
     if (user) {
       fetchUserData();
       fetchProducts();
       loadLocalPurchaseHistory();
+      fetchCoupons();
     } else {
       setLoading(false);
       router.replace('/');
@@ -134,6 +188,30 @@ export default function MenuScreen() {
     }
   };
 
+  const fetchCoupons = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'coupons'));
+      const data: Coupon[] = snapshot.docs.map((docSnap) => {
+        const couponData = docSnap.data() as any;
+        return {
+          id: docSnap.id,
+          code: (couponData.code || '').toUpperCase(),
+          description: couponData.description || '',
+          discountType: couponData.discountType === 'fixed' ? 'fixed' : 'percent',
+          amount: Number(couponData.amount) || 0,
+          isActive: couponData.isActive !== false,
+          expiresAt: couponData.expiresAt || null,
+          usageLimit: couponData.usageLimit != null ? Number(couponData.usageLimit) : null,
+          usageCount: Number(couponData.usageCount || 0),
+          isWelcome: couponData.isWelcome ?? false,
+        };
+      });
+      setAvailableCoupons(data);
+    } catch (error) {
+      console.error('Error al obtener cupones:', error);
+    }
+  };
+
   const loadLocalPurchaseHistory = async () => {
     try {
       const jsonValue = await AsyncStorage.getItem(HISTORY_STORAGE_KEY);
@@ -148,6 +226,202 @@ export default function MenuScreen() {
     const updatedHistory = [newPurchase, ...purchaseHistory];
     setPurchaseHistory(updatedHistory);
     await AsyncStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updatedHistory));
+  };
+
+  function isCouponExpired(coupon: Coupon) {
+    if (!coupon.expiresAt) return false;
+    const expiresAt = new Date(coupon.expiresAt);
+    if (Number.isNaN(expiresAt.getTime())) return false;
+    return expiresAt.getTime() < Date.now();
+  }
+
+  function calculateCouponDiscount(subtotal: number, coupon: Coupon) {
+    if (!coupon || subtotal <= 0) return 0;
+    const rawDiscount =
+      coupon.discountType === 'percent'
+        ? (subtotal * coupon.amount) / 100
+        : coupon.amount;
+    const normalized = Math.min(subtotal, Math.max(0, rawDiscount));
+    return Math.round(normalized);
+  }
+
+  const handleApplyCoupon = () => {
+    const rawCode = couponCodeInput.trim().toUpperCase();
+    if (!rawCode) {
+      setCouponError('Ingresa un código de cupón.');
+      setCouponSuccess(null);
+      return;
+    }
+    const coupon = availableCoupons.find((c) => c.code === rawCode);
+    if (!coupon || !coupon.isActive) {
+      setCouponError('Cupón no encontrado o inactivo.');
+      setCouponSuccess(null);
+      return;
+    }
+    if (isCouponExpired(coupon)) {
+      setCouponError('Este cupón ya expiró.');
+      setCouponSuccess(null);
+      return;
+    }
+    if (coupon.usageLimit != null && coupon.usageCount != null && coupon.usageCount >= coupon.usageLimit) {
+      setCouponError('Este cupón alcanzó el número máximo de usos.');
+      setCouponSuccess(null);
+      return;
+    }
+    if (coupon.isWelcome && purchaseHistory.length > 0) {
+      setCouponError('Este cupón es exclusivo para nuevos usuarios.');
+      setCouponSuccess(null);
+      return;
+    }
+    setAppliedCoupon(coupon);
+    setCouponCodeInput(rawCode);
+    setCouponError(null);
+    const discountText =
+      coupon.discountType === 'percent'
+        ? `${coupon.amount}%`
+        : `${coupon.amount} pts`;
+    setCouponSuccess(`Cupón ${coupon.code} aplicado. Descuento: ${discountText}.`);
+  };
+
+  const handleClearCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCodeInput('');
+    setCouponError(null);
+    setCouponSuccess(null);
+  };
+
+  const markCouponAsUsed = async (coupon: Coupon | null) => {
+    if (!coupon) return;
+    try {
+      await updateDoc(doc(db, 'coupons', coupon.id), {
+        usageCount: increment(1),
+      });
+      setAvailableCoupons((prev) =>
+        prev.map((c) => {
+          if (c.id !== coupon.id) return c;
+          const nextUsage = (c.usageCount || 0) + 1;
+          const reachedLimit = c.usageLimit != null && nextUsage >= c.usageLimit;
+          return {
+            ...c,
+            usageCount: nextUsage,
+            isActive: reachedLimit ? false : c.isActive,
+          };
+        }),
+      );
+    } catch (error) {
+      console.error('Error al actualizar el cupón:', error);
+    }
+  };
+
+  const sanitizeCardNumber = (value: string) => value.replace(/\D/g, '');
+
+  const detectCardBrand = (value: string) => {
+    if (/^4\d{12,18}$/.test(value)) return 'Visa';
+    if (/^5[1-5]\d{14}$/.test(value)) return 'Mastercard';
+    if (/^3[47]\d{13}$/.test(value)) return 'Amex';
+    if (/^6(?:011|5\d{2})\d{12}$/.test(value)) return 'Discover';
+    return 'Tarjeta';
+  };
+
+  const luhnCheck = (value: string) => {
+    let sum = 0;
+    let shouldDouble = false;
+    for (let i = value.length - 1; i >= 0; i -= 1) {
+      let digit = parseInt(value.charAt(i), 10);
+      if (Number.isNaN(digit)) return false;
+      if (shouldDouble) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+      shouldDouble = !shouldDouble;
+    }
+    return sum % 10 === 0;
+  };
+
+  const resetPaymentForm = () => {
+    setCardholderName('');
+    setCardNumber('');
+    setCardExpiry('');
+    setCardCvv('');
+  };
+
+  const handleProcessPayment = async () => {
+    if (cart.length === 0) {
+      Alert.alert('Carrito vacío', 'Agrega productos antes de pagar.');
+      return;
+    }
+
+    const holderName = cardholderName.trim();
+    const sanitizedNumber = sanitizeCardNumber(cardNumber);
+    const expiryTrimmed = cardExpiry.trim();
+    const cvvTrimmed = cardCvv.trim();
+
+    if (!holderName) {
+      Alert.alert('Datos incompletos', 'Ingresa el nombre del titular de la tarjeta.');
+      return;
+    }
+    if (!/^\d{13,19}$/.test(sanitizedNumber) || !luhnCheck(sanitizedNumber)) {
+      Alert.alert('Tarjeta inválida', 'Revisa el número de tarjeta ingresado.');
+      return;
+    }
+
+    const expiryMatch = expiryTrimmed.match(/^(\d{2})\/(\d{2})$/);
+    if (!expiryMatch) {
+      Alert.alert('Fecha inválida', 'Usa el formato MM/AA para la fecha de expiración.');
+      return;
+    }
+    const month = Number(expiryMatch[1]);
+    const year = Number(`20${expiryMatch[2]}`);
+    if (month < 1 || month > 12) {
+      Alert.alert('Fecha inválida', 'El mes debe estar entre 01 y 12.');
+      return;
+    }
+    const expiryDate = new Date(year, month);
+    if (expiryDate <= new Date()) {
+      Alert.alert('Tarjeta expirada', 'La tarjeta ya no es válida.');
+      return;
+    }
+
+    if (!/^\d{3,4}$/.test(cvvTrimmed)) {
+      Alert.alert('CVV inválido', 'El CVV debe tener 3 o 4 dígitos.');
+      return;
+    }
+
+    setProcessingPayment(true);
+    try {
+      const subtotal = cartSubtotal;
+      const discount = couponDiscount;
+      const total = Math.max(0, payableTotal);
+      const paymentSummary: PaymentSummary = {
+        method: 'card',
+        cardBrand: detectCardBrand(sanitizedNumber),
+        last4: sanitizedNumber.slice(-4),
+        processedAt: new Date().toISOString(),
+      };
+      const newPurchase: PurchaseHistory = {
+        id: Date.now().toString(),
+        items: [...cart],
+        date: new Date().toISOString(),
+        subtotal,
+        discount,
+        couponCode: appliedCoupon?.code,
+        total,
+        payment: paymentSummary,
+      };
+      await savePurchaseToHistory(newPurchase);
+      await markCouponAsUsed(appliedCoupon);
+      setCart([]);
+      handleClearCoupon();
+      setShowPaymentModal(false);
+      resetPaymentForm();
+      Alert.alert('Pago exitoso', 'Tu compra ha sido registrada.');
+    } catch (error) {
+      console.error('Error al simular el pago:', error);
+      Alert.alert('Error', 'No se pudo procesar el pago simulado.');
+    } finally {
+      setProcessingPayment(false);
+    }
   };
 
   const handleAddToCart = (product: Product) => {
@@ -172,27 +446,43 @@ export default function MenuScreen() {
       Alert.alert('Error', 'Datos del usuario no encontrados. Intenta iniciar sesión nuevamente.');
       return;
     }
-    const totalCost = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    if (cart.length === 0) {
+      Alert.alert('Carrito vacío', 'Agrega productos antes de canjear.');
+      return;
+    }
+    if (processingRedeem) return;
+
+    const totalCost = Math.max(0, payableTotal);
     if (userData.points < totalCost) {
       Alert.alert('Puntos insuficientes', 'No tienes suficientes puntos para canjear estos productos.');
       return;
     }
+
+    setProcessingRedeem(true);
     try {
       const newPurchase: PurchaseHistory = {
         id: Date.now().toString(),
         items: [...cart],
         date: new Date().toISOString(),
+        subtotal: cartSubtotal,
+        discount: couponDiscount,
+        couponCode: appliedCoupon?.code,
         total: totalCost,
+        payment: { method: 'points', pointsUsed: totalCost },
       };
       const updatedPoints = userData.points - totalCost;
       await updateDoc(doc(db, 'users', userData.docId), { points: updatedPoints });
       await savePurchaseToHistory(newPurchase);
+      await markCouponAsUsed(appliedCoupon);
       setUserData({ ...userData, points: updatedPoints });
       setCart([]);
-      Alert.alert('Compra exitosa', `Tu compra de ${cart.length} productos ha sido procesada.`);
+      handleClearCoupon();
+      Alert.alert('Canje exitoso', `Tu canje de ${cart.length} productos ha sido procesado.`);
     } catch (error) {
       console.error('Error al procesar el canje:', error);
       Alert.alert('Error', 'No se pudo procesar el canje');
+    } finally {
+      setProcessingRedeem(false);
     }
   };
 
@@ -207,18 +497,7 @@ export default function MenuScreen() {
   };
 
   const handleProfile = () => {
-    setActiveSection('profile');
     router.push('/EditProfile');
-  };
-
-  const handleHome = () => {
-    setActiveSection('home');
-    router.push('/client/MenuScreen');
-  };
-
-  const handlePoints = () => {
-    setActiveSection('points');
-    router.push('/QRPoints');
   };
 
   const toggleHistory = () => setShowHistory(!showHistory);
@@ -300,6 +579,23 @@ export default function MenuScreen() {
           </Text>
         ))}
       </View>
+      {typeof item.subtotal === 'number' ? (
+        <Text style={styles.historyMeta}>Subtotal: {item.subtotal} pts</Text>
+      ) : null}
+      {item.couponCode ? (
+        <Text style={styles.historyMeta}>
+          Cupón {item.couponCode} aplicado (-{item.discount ?? 0} pts)
+        </Text>
+      ) : null}
+      {item.payment?.method === 'card' ? (
+        <Text style={styles.historyPayment}>
+          Pago con {item.payment.cardBrand} terminada en {item.payment.last4}
+        </Text>
+      ) : item.payment?.method === 'points' ? (
+        <Text style={styles.historyPayment}>
+          Canje con puntos ({item.payment.pointsUsed} pts)
+        </Text>
+      ) : null}
       <Text style={styles.historyTotal}>Total: {item.total} pts</Text>
     </View>
   );
@@ -376,6 +672,27 @@ export default function MenuScreen() {
           showsHorizontalScrollIndicator={false}
         />
 
+        {activeCoupons.length > 0 && (
+          <View style={styles.couponSection}>
+            <Text style={styles.couponTitle}>Cupones disponibles</Text>
+            {activeCoupons.map((coupon) => (
+              <View key={coupon.id} style={styles.couponCard}>
+                <Text style={styles.couponCode}>{coupon.code}</Text>
+                {coupon.description ? <Text style={styles.couponDescription}>{coupon.description}</Text> : null}
+                <Text style={styles.couponMeta}>
+                  {coupon.discountType === 'percent'
+                    ? `${coupon.amount}% de descuento`
+                    : `${coupon.amount} pts de descuento`}
+                  {coupon.isWelcome ? ' · Solo nuevos usuarios' : ''}
+                  {coupon.expiresAt
+                    ? ` · Vence ${new Date(coupon.expiresAt).toLocaleDateString('es-ES')}`
+                    : ''}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* Productos */}
         <FlatList
           data={filteredProducts}
@@ -433,45 +750,151 @@ export default function MenuScreen() {
                 renderItem={renderCartItem}
                 scrollEnabled={false}
               />
-              <Text style={styles.cartTotal}>
-                Total: {cart.reduce((sum, item) => sum + item.price * item.quantity, 0)} pts
-              </Text>
+              <View style={styles.couponInputRow}>
+                <TextInput
+                  style={styles.couponInput}
+                  placeholder="Código de cupón"
+                  value={couponCodeInput}
+                  autoCapitalize="characters"
+                  onChangeText={(value) => {
+                    setCouponCodeInput(value.toUpperCase());
+                    setCouponError(null);
+                    setCouponSuccess(null);
+                  }}
+                />
+                <TouchableOpacity
+                  style={styles.couponButton}
+                  onPress={appliedCoupon ? handleClearCoupon : handleApplyCoupon}
+                >
+                  <Text style={styles.couponButtonText}>{appliedCoupon ? 'Quitar' : 'Aplicar'}</Text>
+                </TouchableOpacity>
+              </View>
+              {couponError ? <Text style={styles.couponFeedbackError}>{couponError}</Text> : null}
+              {couponSuccess ? <Text style={styles.couponFeedbackSuccess}>{couponSuccess}</Text> : null}
+              <View style={styles.totalsBox}>
+                <Text style={styles.cartSubtotalText}>Subtotal: {cartSubtotal} pts</Text>
+                {appliedCoupon ? (
+                  <Text style={styles.cartDiscountText}>
+                    Descuento ({appliedCoupon.code}): -{couponDiscount} pts
+                  </Text>
+                ) : null}
+                <Text style={styles.cartTotal}>Total: {payableTotal} pts</Text>
+              </View>
               <TouchableOpacity
-                style={styles.redeemButton}
+                style={[
+                  styles.redeemButton,
+                  (!userData || userData.points < payableTotal || processingRedeem) && styles.disabledButton,
+                ]}
                 onPress={handleRedeemCart}
                 disabled={
+                  processingRedeem ||
                   !userData ||
-                  userData.points < cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
+                  userData.points < payableTotal
                 }
               >
-                <Text style={styles.redeemButtonText}>Canjear</Text>
+                <Text style={styles.redeemButtonText}>
+                  {processingRedeem ? 'Procesando...' : 'Canjear con puntos'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.payButton}
+                onPress={() => {
+                  resetPaymentForm();
+                  setProcessingPayment(false);
+                  setShowPaymentModal(true);
+                }}
+                disabled={processingPayment}
+              >
+                <Text style={styles.payButtonText}>Pagar con tarjeta</Text>
               </TouchableOpacity>
             </>
           )}
         </View>
       </ScrollView>
 
-      {/* Bottom Nav (misma funcionalidad) */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity
-          style={[styles.navButton, activeSection === 'points' && styles.navButtonActive]}
-          onPress={handlePoints}
-        >
-          <Icon name="attach-money" size={28} color={activeSection === 'points' ? '#FFF8E1' : '#6B4F32'} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.navButton, activeSection === 'home' && styles.navButtonActive]}
-          onPress={handleHome}
-        >
-          <Icon name="home" size={28} color={activeSection === 'home' ? '#FFF8E1' : '#6B4F32'} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.navButton, activeSection === 'profile' && styles.navButtonActive]}
-          onPress={handleProfile}
-        >
-          <Icon name="person" size={28} color={activeSection === 'profile' ? '#FFF8E1' : '#6B4F32'} />
-        </TouchableOpacity>
-      </View>
+      <Modal
+        visible={showPaymentModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          setShowPaymentModal(false);
+          setProcessingPayment(false);
+          resetPaymentForm();
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            style={styles.modalContainer}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Pago con tarjeta</Text>
+              <Text style={styles.modalTotal}>Total a pagar: {payableTotal} pts</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Nombre del titular"
+                value={cardholderName}
+                onChangeText={setCardholderName}
+                autoCapitalize="words"
+              />
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Número de tarjeta"
+                value={cardNumber}
+                onChangeText={setCardNumber}
+                keyboardType="number-pad"
+                maxLength={19}
+              />
+              <View style={styles.modalRow}>
+                <TextInput
+                  style={[styles.modalInput, styles.modalInputHalf]}
+                  placeholder="MM/AA"
+                  value={cardExpiry}
+                  onChangeText={setCardExpiry}
+                  keyboardType="number-pad"
+                  maxLength={5}
+                />
+                <TextInput
+                  style={[styles.modalInput, styles.modalInputHalf]}
+                  placeholder="CVV"
+                  value={cardCvv}
+                  onChangeText={setCardCvv}
+                  keyboardType="number-pad"
+                  secureTextEntry
+                  maxLength={4}
+                />
+              </View>
+              {appliedCoupon ? (
+                <Text style={styles.modalInfo}>
+                  Incluye cupón {appliedCoupon.code}: -{couponDiscount} pts
+                </Text>
+              ) : null}
+              <View style={styles.modalButtonsRow}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalCancelButton]}
+                  onPress={() => {
+                    setShowPaymentModal(false);
+                    setProcessingPayment(false);
+                    resetPaymentForm();
+                  }}
+                >
+                  <Text style={styles.modalCancelText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalConfirmButton]}
+                  onPress={handleProcessPayment}
+                  disabled={processingPayment}
+                >
+                  <Text style={styles.modalConfirmText}>
+                    {processingPayment ? 'Procesando...' : 'Pagar ahora'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
     </ImageBackground>
   );
 }
@@ -482,7 +905,6 @@ const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,243,224,0.55)' },
 
   // Estructura
-  container: { flex: 1, backgroundColor: '#FFF8E1' },
   scrollContent: { paddingBottom: 110 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
@@ -580,6 +1002,36 @@ const styles = StyleSheet.create({
   categoryText: { color: '#6B4F32', fontSize: 13, fontWeight: '600' },
   selectedCategoryText: { color: '#FFF8E1', fontWeight: '700' },
 
+  // Cupones
+  couponSection: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 6,
+    backgroundColor: '#FFF8E1',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+    padding: 14,
+  },
+  couponTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#5C4033',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  couponCard: {
+    backgroundColor: '#FFFDF6',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+    padding: 12,
+    marginBottom: 8,
+  },
+  couponCode: { fontSize: 15, fontWeight: '800', color: '#C75B12' },
+  couponDescription: { fontSize: 13, color: '#6B4F32', marginTop: 4 },
+  couponMeta: { fontSize: 12, color: '#8C6A4B', marginTop: 6 },
+
   // Productos
   productsList: { paddingHorizontal: 12, paddingBottom: 20 },
   productsRow: { justifyContent: 'space-between', paddingHorizontal: 4, marginBottom: 14 },
@@ -604,7 +1056,7 @@ const styles = StyleSheet.create({
 
   productImage: {
     width: '100%',
-    height: 140,
+    height: 220,
     borderRadius: 12,
     marginBottom: 10,
     backgroundColor: '#FFF3E0',
@@ -658,6 +1110,8 @@ const styles = StyleSheet.create({
   historyDate: { fontWeight: '700', color: '#5C4033', marginBottom: 4 },
   historyItems: { marginBottom: 6 },
   historyProduct: { color: '#6B4F32' },
+  historyMeta: { color: '#8C6A4B', fontSize: 12, marginBottom: 4 },
+  historyPayment: { color: '#5C4033', fontSize: 12, marginBottom: 4, fontWeight: '600' },
   historyTotal: { fontWeight: '800', color: '#C75B12', textAlign: 'right' },
 
   // Carrito
@@ -682,7 +1136,32 @@ const styles = StyleSheet.create({
   quantityControls: { flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'center' },
   quantityText: { marginHorizontal: 10, color: '#5C4033', fontWeight: '700' },
   cartItemPrice: { flex: 1, textAlign: 'right', color: '#5C4033', fontWeight: '700' },
-  cartTotal: { fontWeight: '800', fontSize: 16, color: '#5C4033', textAlign: 'right', marginTop: 10 },
+  couponInputRow: { flexDirection: 'row', marginTop: 12, marginBottom: 6 },
+  couponInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFFDF6',
+    color: '#5C4033',
+    marginRight: 8,
+  },
+  couponButton: {
+    backgroundColor: '#C75B12',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  couponButtonText: { color: '#FFF8E1', fontWeight: '700' },
+  couponFeedbackError: { color: '#D32F2F', fontSize: 13, marginBottom: 4 },
+  couponFeedbackSuccess: { color: '#388E3C', fontSize: 13, marginBottom: 4 },
+  totalsBox: { marginTop: 6 },
+  cartSubtotalText: { color: '#5C4033', fontWeight: '600', textAlign: 'right' },
+  cartDiscountText: { color: '#C75B12', fontWeight: '700', textAlign: 'right', marginTop: 4 },
+  cartTotal: { fontWeight: '800', fontSize: 16, color: '#5C4033', textAlign: 'right', marginTop: 6 },
 
   redeemButton: {
     backgroundColor: '#C75B12',
@@ -692,26 +1171,86 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   redeemButtonText: { color: '#FFF8E1', fontWeight: '700', fontSize: 16 },
-
-  // Bottom nav (misma lógica)
-  bottomNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
+  payButton: {
+    backgroundColor: '#FFD54F',
+    borderRadius: 14,
+    padding: 14,
     alignItems: 'center',
-    backgroundColor: '#FFF3E0',
-    borderTopWidth: 1,
-    borderTopColor: '#E0C097',
-    paddingVertical: 10,
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    elevation: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#E0C097',
   },
-  navButton: { alignItems: 'center', justifyContent: 'center', padding: 10, borderRadius: 24 },
-  navButtonActive: { backgroundColor: '#C75B12' },
+  payButtonText: { color: '#4E342E', fontWeight: '800', fontSize: 16 },
+
+  // Modal de pago
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalContainer: { flex: 1, justifyContent: 'center' },
+  modalContent: {
+    backgroundColor: '#FFFDF6',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#E0C097',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 6,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#5C4033',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  modalTotal: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#C75B12',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#E0C097',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#FFF8E1',
+    color: '#5C4033',
+    marginBottom: 12,
+  },
+  modalRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  modalInputHalf: { flex: 1, marginRight: 10 },
+  modalInfo: {
+    color: '#8C6A4B',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  modalButtonsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  modalCancelButton: {
+    backgroundColor: '#FFF3E0',
+    borderWidth: 1,
+    borderColor: '#D32F2F',
+    marginRight: 8,
+  },
+  modalConfirmButton: {
+    backgroundColor: '#C75B12',
+    marginLeft: 8,
+  },
+  modalCancelText: { color: '#D32F2F', fontWeight: '700' },
+  modalConfirmText: { color: '#FFF8E1', fontWeight: '700' },
 });
