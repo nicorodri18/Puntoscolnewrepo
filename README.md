@@ -72,8 +72,10 @@ Desarrollar un **e-commerce seguro y funcional** que permita:
 
 
 # Estructura del Proyecto
-P
-untoscolnewrepo/
+
+
+```text
+Puntoscolnewrepo/
 ├── app/                       # Pantallas principales (Admin, Cliente, Login)
 ├── assets/                    # Imágenes, íconos y recursos estáticos
 ├── firebaseConfig.ts          # Configuración local de Firebase
@@ -82,7 +84,6 @@ untoscolnewrepo/
 ├── scripts/                   # Scripts automatizados (setup, check_local, etc.)
 ├── package.json               # Scripts npm y dependencias
 └── README.md                  # Este documento
-
 
 ## Variables de Entorno
 
