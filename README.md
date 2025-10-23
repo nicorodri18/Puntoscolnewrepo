@@ -74,7 +74,6 @@ Desarrollar un **e-commerce seguro y funcional** que permita:
 # Estructura del Proyecto
 
 
-```text
 Puntoscolnewrepo/
 ├── app/                       # Pantallas principales (Admin, Cliente, Login)
 ├── assets/                    # Imágenes, íconos y recursos estáticos
