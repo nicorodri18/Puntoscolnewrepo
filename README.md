@@ -70,10 +70,8 @@ Desarrollar un **e-commerce seguro y funcional** que permita:
 	•	Que no existan conexiones hacia Firebase Cloud ni Supabase.
 	•	Que firebaseConfig.ts esté configurado correctamente para emuladores.
 
-
-# Estructura del Proyecto
-
-
+## Estructura del proyecto
+```text
 Puntoscolnewrepo/
 ├── app/                       # Pantallas principales (Admin, Cliente, Login)
 ├── assets/                    # Imágenes, íconos y recursos estáticos
@@ -83,6 +81,8 @@ Puntoscolnewrepo/
 ├── scripts/                   # Scripts automatizados (setup, check_local, etc.)
 ├── package.json               # Scripts npm y dependencias
 └── README.md                  # Este documento
+```
+
 
 ## Variables de Entorno
 
