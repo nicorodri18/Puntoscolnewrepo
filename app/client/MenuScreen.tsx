@@ -56,7 +56,17 @@ interface Coupon {
 
 type PaymentSummary =
   | { method: 'points'; pointsUsed: number }
-  | { method: 'card'; cardBrand: string; last4: string; processedAt: string };
+  | {
+      method: 'card';
+      cardBrand: string;
+      last4: string;
+      cardholderName: string;
+      pointsPurchased: number;
+      processedAt: string;
+    }
+  | { method: 'coupon'; couponCode: string; processedAt: string };
+
+type CardPaymentSummary = Extract<PaymentSummary, { method: 'card' }>;
 
 interface PurchaseHistory {
   id: string;
@@ -91,6 +101,7 @@ export default function MenuScreen() {
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
   const [processingPayment, setProcessingPayment] = useState(false);
+  const [pointsToBuyInput, setPointsToBuyInput] = useState('');
 
   const router = useRouter();
   const auth = getAuth();
@@ -154,6 +165,60 @@ export default function MenuScreen() {
       router.replace('/');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCouponCheckout = async () => {
+    if (!appliedCoupon) {
+      Alert.alert('Cupón requerido', 'Aplica un cupón antes de intentar pagar con él.');
+      return;
+    }
+    if (cart.length === 0) {
+      Alert.alert('Carrito vacío', 'Agrega productos antes de pagar con el cupón.');
+      return;
+    }
+    const subtotal = cartSubtotal;
+    const discount = couponDiscount;
+    const total = Math.max(0, payableTotal);
+    if (discount <= 0) {
+      Alert.alert('Cupón inválido', 'El cupón aplicado no genera descuento sobre el total.');
+      return;
+    }
+    if (total > 0) {
+      Alert.alert(
+        'Cupón insuficiente',
+        'Este cupón no cubre el total del carrito. Completa el pago con tarjeta o puntos.',
+      );
+      return;
+    }
+
+    setProcessingPayment(true);
+    try {
+      const paymentSummary: PaymentSummary = {
+        method: 'coupon',
+        couponCode: appliedCoupon.code,
+        processedAt: new Date().toISOString(),
+      };
+      const newPurchase: PurchaseHistory = {
+        id: Date.now().toString(),
+        items: [...cart],
+        date: new Date().toISOString(),
+        subtotal,
+        discount,
+        couponCode: appliedCoupon.code,
+        total,
+        payment: paymentSummary,
+      };
+      await savePurchaseToHistory(newPurchase);
+      await markCouponAsUsed(appliedCoupon);
+      setCart([]);
+      handleClearCoupon();
+      Alert.alert('Cupón aplicado', 'Tu compra se procesó exitosamente con el cupón.');
+    } catch (error) {
+      console.error('Error al procesar pago con cupón:', error);
+      Alert.alert('Error', 'No se pudo procesar el pago con cupón.');
+    } finally {
+      setProcessingPayment(false);
     }
   };
 
@@ -323,99 +388,61 @@ export default function MenuScreen() {
     return 'Tarjeta';
   };
 
-  const luhnCheck = (value: string) => {
-    let sum = 0;
-    let shouldDouble = false;
-    for (let i = value.length - 1; i >= 0; i -= 1) {
-      let digit = parseInt(value.charAt(i), 10);
-      if (Number.isNaN(digit)) return false;
-      if (shouldDouble) {
-        digit *= 2;
-        if (digit > 9) digit -= 9;
-      }
-      sum += digit;
-      shouldDouble = !shouldDouble;
-    }
-    return sum % 10 === 0;
-  };
-
   const resetPaymentForm = () => {
     setCardholderName('');
     setCardNumber('');
     setCardExpiry('');
     setCardCvv('');
+    setPointsToBuyInput('');
   };
 
   const handleProcessPayment = async () => {
-    if (cart.length === 0) {
-      Alert.alert('Carrito vacío', 'Agrega productos antes de pagar.');
-      return;
-    }
-
     const holderName = cardholderName.trim();
     const sanitizedNumber = sanitizeCardNumber(cardNumber);
     const expiryTrimmed = cardExpiry.trim();
     const cvvTrimmed = cardCvv.trim();
 
-    if (!holderName) {
-      Alert.alert('Datos incompletos', 'Ingresa el nombre del titular de la tarjeta.');
-      return;
-    }
-    if (!/^\d{13,19}$/.test(sanitizedNumber) || !luhnCheck(sanitizedNumber)) {
-      Alert.alert('Tarjeta inválida', 'Revisa el número de tarjeta ingresado.');
+    if (!holderName || !sanitizedNumber || !expiryTrimmed || !cvvTrimmed) {
+      Alert.alert('Datos incompletos', 'Completa todos los campos para procesar el pago simulado.');
       return;
     }
 
-    const expiryMatch = expiryTrimmed.match(/^(\d{2})\/(\d{2})$/);
-    if (!expiryMatch) {
-      Alert.alert('Fecha inválida', 'Usa el formato MM/AA para la fecha de expiración.');
-      return;
-    }
-    const month = Number(expiryMatch[1]);
-    const year = Number(`20${expiryMatch[2]}`);
-    if (month < 1 || month > 12) {
-      Alert.alert('Fecha inválida', 'El mes debe estar entre 01 y 12.');
-      return;
-    }
-    const expiryDate = new Date(year, month);
-    if (expiryDate <= new Date()) {
-      Alert.alert('Tarjeta expirada', 'La tarjeta ya no es válida.');
+    if (!userData) {
+      Alert.alert('Error', 'No se pudo cargar la información del usuario.');
       return;
     }
 
-    if (!/^\d{3,4}$/.test(cvvTrimmed)) {
-      Alert.alert('CVV inválido', 'El CVV debe tener 3 o 4 dígitos.');
+    const requestedPoints = Number(pointsToBuyInput);
+    if (!Number.isFinite(requestedPoints) || requestedPoints <= 0) {
+      Alert.alert('Monto inválido', 'Ingresa una cantidad de puntos válida para comprar.');
       return;
     }
+    const pointsToBuy = Math.floor(requestedPoints);
 
     setProcessingPayment(true);
     try {
-      const subtotal = cartSubtotal;
-      const discount = couponDiscount;
-      const total = Math.max(0, payableTotal);
+      const newPointsBalance = userData.points + pointsToBuy;
       const paymentSummary: PaymentSummary = {
         method: 'card',
         cardBrand: detectCardBrand(sanitizedNumber),
         last4: sanitizedNumber.slice(-4),
+        cardholderName: holderName,
         processedAt: new Date().toISOString(),
+        pointsPurchased: pointsToBuy,
       };
       const newPurchase: PurchaseHistory = {
         id: Date.now().toString(),
-        items: [...cart],
+        items: [],
         date: new Date().toISOString(),
-        subtotal,
-        discount,
-        couponCode: appliedCoupon?.code,
-        total,
+        total: pointsToBuy,
         payment: paymentSummary,
       };
+      await updateDoc(doc(db, 'users', userData.docId), { points: newPointsBalance });
       await savePurchaseToHistory(newPurchase);
-      await markCouponAsUsed(appliedCoupon);
-      setCart([]);
-      handleClearCoupon();
+      setUserData({ ...userData, points: newPointsBalance });
       setShowPaymentModal(false);
       resetPaymentForm();
-      Alert.alert('Pago exitoso', 'Tu compra ha sido registrada.');
+      Alert.alert('Recarga exitosa', `Se añadieron ${pointsToBuy} pts a tu cuenta.`);
     } catch (error) {
       console.error('Error al simular el pago:', error);
       Alert.alert('Error', 'No se pudo procesar el pago simulado.');
@@ -561,44 +588,70 @@ export default function MenuScreen() {
     </View>
   );
 
-  const renderHistoryItem = ({ item }: { item: PurchaseHistory }) => (
-    <View style={styles.historyItem}>
-      <Text style={styles.historyDate}>
-        {new Date(item.date).toLocaleDateString('es-ES', {
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        })}
-      </Text>
-      <View style={styles.historyItems}>
-        {item.items.map((product, index) => (
-          <Text key={index} style={styles.historyProduct}>
-            {product.quantity}x {product.name} ({product.price * product.quantity} pts)
+  const renderHistoryItem = ({ item }: { item: PurchaseHistory }) => {
+    const cardPayment: CardPaymentSummary | null =
+      item.payment && item.payment.method === 'card' ? item.payment : null;
+    const isPointTopUp =
+      cardPayment != null &&
+      (!item.items || item.items.length === 0) &&
+      cardPayment.pointsPurchased > 0;
+
+    return (
+      <View style={styles.historyItem}>
+        <Text style={styles.historyDate}>
+          {new Date(item.date).toLocaleDateString('es-ES', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </Text>
+        {item.items.length > 0 ? (
+          <View style={styles.historyItems}>
+            {item.items.map((product, index) => (
+              <Text key={index} style={styles.historyProduct}>
+                {product.quantity}x {product.name} ({product.price * product.quantity} pts)
+              </Text>
+            ))}
+          </View>
+        ) : null}
+        {typeof item.subtotal === 'number' ? (
+          <Text style={styles.historyMeta}>Subtotal: {item.subtotal} pts</Text>
+        ) : null}
+        {item.couponCode ? (
+          <Text style={styles.historyMeta}>
+            Cupón {item.couponCode} aplicado (-{item.discount ?? 0} pts)
           </Text>
-        ))}
+        ) : null}
+        {cardPayment ? (
+          <>
+            <Text style={styles.historyPayment}>
+              Compra con {cardPayment.cardBrand} ({cardPayment.cardholderName}) terminada en {cardPayment.last4}
+            </Text>
+            {isPointTopUp ? (
+              <Text style={styles.historyMeta}>
+                Recarga de puntos: +{cardPayment.pointsPurchased} pts
+              </Text>
+            ) : null}
+          </>
+        ) : item.payment?.method === 'points' ? (
+          <Text style={styles.historyPayment}>
+            Canje con puntos ({item.payment.pointsUsed} pts)
+          </Text>
+        ) : item.payment?.method === 'coupon' ? (
+          <Text style={styles.historyPayment}>
+            Pago cubierto con cupón {item.payment.couponCode}
+          </Text>
+        ) : null}
+        <Text style={styles.historyTotal}>
+          {isPointTopUp
+            ? `Saldo cargado: +${cardPayment?.pointsPurchased ?? 0} pts`
+            : `Total: ${item.total} pts`}
+        </Text>
       </View>
-      {typeof item.subtotal === 'number' ? (
-        <Text style={styles.historyMeta}>Subtotal: {item.subtotal} pts</Text>
-      ) : null}
-      {item.couponCode ? (
-        <Text style={styles.historyMeta}>
-          Cupón {item.couponCode} aplicado (-{item.discount ?? 0} pts)
-        </Text>
-      ) : null}
-      {item.payment?.method === 'card' ? (
-        <Text style={styles.historyPayment}>
-          Pago con {item.payment.cardBrand} terminada en {item.payment.last4}
-        </Text>
-      ) : item.payment?.method === 'points' ? (
-        <Text style={styles.historyPayment}>
-          Canje con puntos ({item.payment.pointsUsed} pts)
-        </Text>
-      ) : null}
-      <Text style={styles.historyTotal}>Total: {item.total} pts</Text>
-    </View>
-  );
+    );
+  };
 
   const renderCategoryItem = ({ item }: { item: string }) => (
     <TouchableOpacity
@@ -800,13 +853,32 @@ export default function MenuScreen() {
                 style={styles.payButton}
                 onPress={() => {
                   resetPaymentForm();
+                  const neededPoints = Math.max(
+                    0,
+                    Math.ceil(Math.max(0, payableTotal - (userData?.points ?? 0))),
+                  );
+                  setPointsToBuyInput(neededPoints > 0 ? String(neededPoints) : '');
                   setProcessingPayment(false);
                   setShowPaymentModal(true);
                 }}
                 disabled={processingPayment}
               >
-                <Text style={styles.payButtonText}>Pagar con tarjeta</Text>
+                <Text style={styles.payButtonText}>Comprar puntos con tarjeta</Text>
               </TouchableOpacity>
+              {appliedCoupon ? (
+                <TouchableOpacity
+                  style={[
+                    styles.couponPayButton,
+                    processingPayment && styles.disabledButton,
+                  ]}
+                  onPress={handleCouponCheckout}
+                  disabled={processingPayment}
+                >
+                  <Text style={styles.couponPayButtonText}>
+                    {processingPayment ? 'Procesando...' : 'Pagar con cupón'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </>
           )}
         </View>
@@ -828,8 +900,24 @@ export default function MenuScreen() {
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           >
             <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>Pago con tarjeta</Text>
-              <Text style={styles.modalTotal}>Total a pagar: {payableTotal} pts</Text>
+              <Text style={styles.modalTitle}>Comprar puntos con tarjeta</Text>
+              <Text style={styles.modalTotal}>
+                Saldo actual: {userData?.points ?? 0} pts
+              </Text>
+              <Text style={styles.modalInfo}>
+                Total del carrito: {cartSubtotal} pts · Falta por cubrir: {Math.max(
+                  0,
+                  payableTotal - (userData?.points ?? 0),
+                )}{' '}
+                pts
+              </Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Puntos a comprar"
+                value={pointsToBuyInput}
+                onChangeText={(value) => setPointsToBuyInput(value.replace(/[^0-9]/g, ''))}
+                keyboardType="number-pad"
+              />
               <TextInput
                 style={styles.modalInput}
                 placeholder="Nombre del titular"
@@ -886,7 +974,7 @@ export default function MenuScreen() {
                   disabled={processingPayment}
                 >
                   <Text style={styles.modalConfirmText}>
-                    {processingPayment ? 'Procesando...' : 'Pagar ahora'}
+                    {processingPayment ? 'Procesando...' : 'Comprar puntos'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1171,6 +1259,16 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   redeemButtonText: { color: '#FFF8E1', fontWeight: '700', fontSize: 16 },
+  couponPayButton: {
+    backgroundColor: '#8BC34A',
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#7CB342',
+  },
+  couponPayButtonText: { color: '#264d00', fontWeight: '800', fontSize: 16 },
   payButton: {
     backgroundColor: '#FFD54F',
     borderRadius: 14,
