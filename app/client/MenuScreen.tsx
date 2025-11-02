@@ -849,22 +849,6 @@ export default function MenuScreen() {
                   {processingRedeem ? 'Procesando...' : 'Canjear con puntos'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.payButton}
-                onPress={() => {
-                  resetPaymentForm();
-                  const neededPoints = Math.max(
-                    0,
-                    Math.ceil(Math.max(0, payableTotal - (userData?.points ?? 0))),
-                  );
-                  setPointsToBuyInput(neededPoints > 0 ? String(neededPoints) : '');
-                  setProcessingPayment(false);
-                  setShowPaymentModal(true);
-                }}
-                disabled={processingPayment}
-              >
-                <Text style={styles.payButtonText}>Comprar puntos con tarjeta</Text>
-              </TouchableOpacity>
               {appliedCoupon ? (
                 <TouchableOpacity
                   style={[
@@ -881,6 +865,25 @@ export default function MenuScreen() {
               ) : null}
             </>
           )}
+          <TouchableOpacity
+            style={[
+              styles.payButton,
+              processingPayment && styles.disabledButton,
+            ]}
+            onPress={() => {
+              resetPaymentForm();
+              const neededPoints = Math.max(
+                0,
+                Math.ceil(Math.max(0, payableTotal - (userData?.points ?? 0))),
+              );
+              setPointsToBuyInput(neededPoints > 0 ? String(neededPoints) : '');
+              setProcessingPayment(false);
+              setShowPaymentModal(true);
+            }}
+            disabled={processingPayment}
+          >
+            <Text style={styles.payButtonText}>Recargar puntos con tarjeta</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
