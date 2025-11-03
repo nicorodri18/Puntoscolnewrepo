@@ -1,11 +1,13 @@
 import { useRouter } from 'expo-router';
 import {
   createUserWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
   signInWithEmailAndPassword,
+  signOut,
   updateProfile,
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +22,9 @@ import {
 } from 'react-native';
 import { auth, db } from '../../firebaseConfig';
 
+const ADMIN_EMAIL = 'admin@gmail.com';
+const ADMIN_PASSWORD = 'adminpass';
+
 export default function HomeScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -27,6 +32,40 @@ export default function HomeScreen() {
   const [name, setName] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    // Garantiza que la cuenta de administrador exista incluso sin scripts de seed.
+    const bootstrapAdminAccount = async () => {
+      try {
+        const methods = await fetchSignInMethodsForEmail(auth, ADMIN_EMAIL);
+        if (methods.length === 0) {
+          const adminCred = await createUserWithEmailAndPassword(
+            auth,
+            ADMIN_EMAIL,
+            ADMIN_PASSWORD
+          );
+          await updateProfile(adminCred.user, { displayName: 'Administrador' });
+          await setDoc(doc(db, 'users', adminCred.user.uid), {
+            name: 'Administrador',
+            email: ADMIN_EMAIL,
+            points: 0,
+            role: 'admin',
+            approved: true,
+          });
+        }
+      } catch (adminError: any) {
+        if (adminError?.code !== 'auth/email-already-in-use') {
+          console.warn('No se pudo inicializar la cuenta admin:', adminError);
+        }
+      } finally {
+        if (auth.currentUser?.email === ADMIN_EMAIL) {
+          await signOut(auth);
+        }
+      }
+    };
+
+    bootstrapAdminAccount();
+  }, []);
 
   const handleAuth = async () => {
     setIsLoading(true);
