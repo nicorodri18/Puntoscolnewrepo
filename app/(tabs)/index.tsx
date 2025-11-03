@@ -57,7 +57,17 @@ export default function HomeScreen() {
         }
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      let message = 'Ocurrió un error. Intenta de nuevo.';
+      if (error?.code === 'auth/weak-password') {
+        message = 'La contraseña debe tener al menos 6 caracteres.';
+      } else if (error?.code === 'auth/email-already-in-use') {
+        message = 'Ya existe una cuenta con este correo.';
+      } else if (error?.code === 'auth/invalid-email') {
+        message = 'El correo electrónico no es válido.';
+      } else if (error?.message) {
+        message = error.message;
+      }
+      Alert.alert('Error', message);
     } finally {
       setIsLoading(false);
     }
@@ -99,6 +109,9 @@ export default function HomeScreen() {
           keyboardType="email-address"
           autoCapitalize="none"
         />
+        {isRegistering && (
+          <Text style={styles.formHint}>No escriba su correo con mayúsculas</Text>
+        )}
 
         <TextInput
           style={styles.input}
@@ -108,6 +121,11 @@ export default function HomeScreen() {
           onChangeText={setPassword}
           secureTextEntry
         />
+        {isRegistering && (
+          <Text style={styles.formHint}>
+            La contraseña debe tener al menos 6 caracteres.
+          </Text>
+        )}
 
         <TouchableOpacity
           style={[styles.button, isLoading && { opacity: 0.7 }]}
@@ -140,6 +158,13 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  formHint: {
+    width: '90%',
+    color: '#C75B12',
+    fontSize: 12,
+    marginTop: -8,
+    marginBottom: 12,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
