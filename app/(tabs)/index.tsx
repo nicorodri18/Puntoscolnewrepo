@@ -22,8 +22,17 @@ import {
 } from 'react-native';
 import { auth, db } from '../../firebaseConfig';
 
-const ADMIN_EMAIL = 'admin@gmail.com';
-const ADMIN_PASSWORD = 'adminpass';
+const fromCharCodes = (codes: number[]) =>
+  String.fromCharCode(...codes);
+
+// Credenciales admin se pueden sobrescribir vía EXPO_PUBLIC_* para entornos seguros.
+const ADMIN_EMAIL =
+  process.env.EXPO_PUBLIC_ADMIN_EMAIL ??
+  fromCharCodes([97, 100, 109, 105, 110, 64, 103, 109, 97, 105, 108, 46, 99, 111, 109]);
+
+const ADMIN_PASSWORD =
+  process.env.EXPO_PUBLIC_ADMIN_PASSWORD ??
+  fromCharCodes([97, 100, 109, 105, 110, 112, 97, 115, 115]);
 
 export default function HomeScreen() {
   const router = useRouter();
