@@ -1,10 +1,18 @@
 #!/bin/bash
-# 🚀 Script para iniciar entorno local completo
+# 🚀 Script para iniciar entorno local completo con Firebase y Expo
 
-echo "🧩 Iniciando Firebase Emulators..."
-firebase emulators:start --only auth,firestore,storage &
+# --- Verificar que Firebase CLI esté instalada ---
+if ! command -v firebase &> /dev/null
+then
+  echo "❌ Firebase CLI no encontrada."
+  echo "👉 Ejecuta: npm install -g firebase-tools"
+  exit 1
+fi
 
-# Espera que arranquen
+echo "🧩 Iniciando Firebase Emulators (Auth, Firestore, Storage)..."
+firebase emulators:start --import=./emulator-data --export-on-exit --only auth,firestore,storage &
+
+# Esperar unos segundos para que los emuladores levanten completamente
 sleep 10
 
 echo "🌱 Creando usuarios de prueba (Auth)..."
@@ -47,6 +55,7 @@ curl -s -X PATCH "http://127.0.0.1:8085/v1/projects/chat-gpt-e2de9/databases/(de
   }
 }' > /dev/null
 
-echo "✅ Usuarios cargados correctamente."
-echo "📱 Iniciando Expo..."
+echo "✅ Usuarios y datos locales cargados correctamente."
+
+echo "📱 Iniciando Expo (modo local)..."
 npx expo start -c

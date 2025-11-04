@@ -1,0 +1,19 @@
+{
+  "name": "products/product_1762292432157.jpg",
+  "bucket": "chat-gpt-e2de9.appspot.com",
+  "metageneration": 1,
+  "generation": 1762292432212,
+  "contentType": "image/png",
+  "storageClass": "STANDARD",
+  "contentDisposition": "inline",
+  "downloadTokens": [
+    "cf0ffde0-65a2-4a8f-b93b-3ab4b2075f4c"
+  ],
+  "etag": "CyE2efGWjWg4oi4fpm73gROJZm0",
+  "customMetadata": {},
+  "timeCreated": "2025-11-04T21:40:32.216Z",
+  "updated": "2025-11-04T21:40:32.216Z",
+  "size": 285549,
+  "md5Hash": "Npn6jN7at8goboDLwaNTAg==",
+  "crc32c": "2792051642"
+}
