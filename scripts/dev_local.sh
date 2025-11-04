@@ -63,45 +63,14 @@ curl -s -X PATCH "http://127.0.0.1:8085/v1/projects/chat-gpt-e2de9/databases/(de
   }
 }' > /dev/null
 
-# --- Crear productos predeterminados ---
-echo "🛒 Cargando productos predeterminados..."
+# --- Eliminar productos no deseados importados ---
+echo "🧹 Eliminando productos no deseados..."
+curl -s -X DELETE "http://127.0.0.1:8085/v1/projects/chat-gpt-e2de9/databases/(default)/documents/products/arepa_clasica" > /dev/null
+curl -s -X DELETE "http://127.0.0.1:8085/v1/projects/chat-gpt-e2de9/databases/(default)/documents/products/empanada_carne" > /dev/null
+curl -s -X DELETE "http://127.0.0.1:8085/v1/projects/chat-gpt-e2de9/databases/(default)/documents/products/jugo_naranja" > /dev/null
 
-curl -s -X PATCH "http://127.0.0.1:8085/v1/projects/chat-gpt-e2de9/databases/(default)/documents/products/arepa_clasica" \
--H "Content-Type: application/json" \
--d '{
-  "fields": {
-    "name": { "stringValue": "Arepa Clásica" },
-    "price": { "integerValue": 8000 },
-    "category": { "stringValue": "Comida" },
-    "available": { "booleanValue": true },
-    "description": { "stringValue": "Arepa tradicional con queso y mantequilla." }
-  }
-}' > /dev/null
-
-curl -s -X PATCH "http://127.0.0.1:8085/v1/projects/chat-gpt-e2de9/databases/(default)/documents/products/empanada_carne" \
--H "Content-Type: application/json" \
--d '{
-  "fields": {
-    "name": { "stringValue": "Empanada de Carne" },
-    "price": { "integerValue": 2500 },
-    "category": { "stringValue": "Comida" },
-    "available": { "booleanValue": true },
-    "description": { "stringValue": "Empanada artesanal rellena de carne sazonada." }
-  }
-}' > /dev/null
-
-curl -s -X PATCH "http://127.0.0.1:8085/v1/projects/chat-gpt-e2de9/databases/(default)/documents/products/jugo_naranja" \
--H "Content-Type: application/json" \
--d '{
-  "fields": {
-    "name": { "stringValue": "Jugo de Naranja" },
-    "price": { "integerValue": 4000 },
-    "category": { "stringValue": "Bebidas" },
-    "available": { "booleanValue": true },
-    "description": { "stringValue": "Jugo natural de naranja recién exprimido." }
-  }
-}' > /dev/null
-
+# --- Datos importados desde el directorio del emulador ---
+echo "🛒 Productos predeterminados importados desde ./emulator-data."
 echo "✅ Usuarios y productos locales cargados correctamente."
 echo "📱 Iniciando Expo (modo local)..."
 npx expo start -c
